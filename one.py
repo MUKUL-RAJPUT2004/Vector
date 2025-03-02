@@ -112,7 +112,9 @@ def evaluate_precision(original_text, summary):
 
 def enhance_sentence(sentence):
     blob = TextBlob(sentence)
-    return " ".join(word for word, pos in blob.tags if pos not in ['DT', 'IN', 'TO', 'CC', 'UH'] and not any(p in word for p in string.punctuation))
+    # Preserve sentence structure, filter only stopwords and excessive punctuation
+    words = [word for word, pos in blob.tags if pos not in ['DT', 'IN', 'TO', 'CC', 'UH'] and word.lower() not in stopwords.words('english')]
+    return " ".join(words) if words else sentence
 
 def enhance_student_language(text):
     words = text.split()
@@ -171,7 +173,7 @@ def generate_summary(text, min_length, max_length, format_option):
     # NER with fallback
     entities = []
     try:
-        for sent in sent_tokenize(text[:10000]):  # Use sent_tokenize directly
+        for sent in sent_tokenize(text[:10000]):
             for chunk in ne_chunk(pos_tag(word_tokenize(sent))):
                 if hasattr(chunk, 'label') and chunk.label() in ['PERSON', 'ORGANIZATION', 'GPE', 'EVENT']:
                     entities.extend([word for word, pos in chunk.leaves()])
@@ -184,8 +186,7 @@ def generate_summary(text, min_length, max_length, format_option):
 
     # Key phrase extraction
     words = text.lower().split()
-    key_phrases = [phrase for phrase in words if len(phrase) > 3 and any(c.isalnum() for c in phrase) and 
-                  phrase not in stopwords.words('english')]
+    key_phrases = [phrase for phrase in words if len(phrase) > 3 and any(c.isalnum() for c in phrase) and phrase not in stopwords.words('english')]
     key_phrases_set = set(key_phrases)
     phrase_scores = tf_idf_weighting(text, key_phrases)
     sentences = sent_tokenize(text)
@@ -194,7 +195,7 @@ def generate_summary(text, min_length, max_length, format_option):
     stop_words = set(stopwords.words('english'))
     word_frequencies = Counter(word.lower() for word in word_tokenize(text) if word.lower() not in stop_words)
     sentence_scores = parallel_sentence_scoring(sentences, word_frequencies, stop_words)
-    num_sentences = min(max(min_length // 10, 1), len(sentences))  # Increased coverage
+    num_sentences = min(max(min_length // 5, 2), len(sentences))  # Increased sentence coverage
     top_sentences = sorted(sentence_scores.items(), key=lambda x: x[1], reverse=True)[:num_sentences]
     summary_sentences = [sentences[i] for i, _ in top_sentences]
 
@@ -202,18 +203,18 @@ def generate_summary(text, min_length, max_length, format_option):
     enhanced_summary = []
     for sent in summary_sentences:
         enhanced_sent = enhance_sentence(sent)
-        if enhanced_sent.strip():  # Ensure non-empty
-            enhanced_sent = enhance_student_language(enhanced_sent)  # Apply student enhancement
+        if enhanced_sent.strip():
+            enhanced_sent = re.sub(r'\s+', ' ', enhance_student_language(enhanced_sent)).strip()
             enhanced_summary.append(enhanced_sent)
 
-    summary_text = " ".join(enhanced_summary)[:max_length].strip() + "."
+    summary_text = ". ".join(enhanced_summary)[:max_length].strip() + "."
 
     # Post-process for precision and spelling correction
-    summary_sentences = [s.strip() + "." for s in summary_text.split(". ") if s.strip() and len(s.split()) > 2]  # Lowered length threshold
+    summary_sentences = [s + "." for s in summary_text.split(". ") if s.strip() and len(s.split()) > 2]
     unique_sentences = []
     for sent in summary_sentences:
         sent_words = sent.lower().split()
-        if not any(cosine_similarity(sent_words, unique_sent.lower().split()) > 0.25 for unique_sent in unique_sentences):  # Lowered threshold
+        if not any(cosine_similarity(sent_words, unique_sent.lower().split()) > 0.15 for unique_sent in unique_sentences):  # Lowered threshold
             unique_sentences.append(sent)
     summary_text = " ".join(unique_sentences)
     summary_text = correct_spelling(summary_text)
@@ -229,14 +230,9 @@ def generate_summary(text, min_length, max_length, format_option):
     if isinstance(summary_text, str):
         summary_text = re.sub(r'\s+', ' ', summary_text).strip()
         summary_text = re.sub(r'(\w+)\s+\1', r'\1', summary_text, flags=re.IGNORECASE)
-        summary_text = re.sub(r'(precisely|exactly|accurately)\s+\1', r'\1', summary_text, flags=re.IGNORECASE)
-        summary_text = re.sub(r'(this)\s+(precisely|exactly)', r'\1', summary_text, flags=re.IGNORECASE)
-        summary_text = re.sub(r'(is)\s+(precisely|exactly)', r'\1', summary_text, flags=re.IGNORECASE)
-        summary_text = re.sub(r'(offers)\s+accurately', r'\1', summary_text, flags=re.IGNORECASE)
-        summary_text = re.sub(r'(was)\s+exactly', r'\1', summary_text, flags=re.IGNORECASE)
         summary_text = re.sub(r'\.(?!\s)', '. ', summary_text)
         blob = TextBlob(summary_text)
-        summary_text = blob.correct().string  # Basic grammar correction
+        summary_text = blob.correct().string
         sentence_count = textstat.sentence_count(summary_text)
         if sentence_count == 0 or sentence_count < 2:
             summary_text = re.sub(r'\.(?!\s)', '. ', summary_text)
@@ -244,82 +240,6 @@ def generate_summary(text, min_length, max_length, format_option):
         summary_text = enhance_student_language(summary_text)
     else:
         summary_text = str(summary_text)
-
-    words = summary_text.split()
-    clean_summary = []
-    seen_phrases = set()
-    for word in words:
-        clean_word = word.split("(e.g.,")[0].strip()
-        if clean_word.lower() in key_phrases_set or clean_word.isalpha() or clean_word.lower() in [e.lower() for e in entities]:
-            if clean_word.lower() not in seen_phrases:
-                clean_summary.append(clean_word)
-                seen_phrases.add(clean_word.lower())
-    summary_text = " ".join(clean_summary)
-
-    if not check_originality(text, summary_text):
-        stop_words = set(stopwords.words('english'))
-        word_frequencies = Counter(word.lower() for word in word_tokenize(text) if word.lower() not in stop_words)
-        sentence_scores = parallel_sentence_scoring(sentences, word_frequencies, stop_words)
-        num_sentences = min(max(min_length // 10, 1), len(sentences))
-        top_sentences = sorted(sentence_scores.items(), key=lambda x: x[1], reverse=True)[:num_sentences]
-        summary_sentences = [sentences[i] for i, _ in top_sentences]
-        enhanced_summary = [enhance_sentence(sent) for sent in summary_sentences]
-        enhanced_summary = [enhance_student_language(sent) for sent in enhanced_summary]
-        summary_text = " ".join(enhanced_summary)[:max_length].strip() + "."
-        summary_sentences = [s.strip() + "." for s in summary_text.split(". ") if s.strip() and len(s.split()) > 2]
-        unique_sentences = []
-        for sent in summary_sentences:
-            if not any(cosine_similarity(sent.lower().split(), unique_sent.lower().split()) > 0.25 for unique_sent in unique_sentences):
-                unique_sentences.append(sent)
-        summary_text = " ".join(unique_sentences)
-        summary_text = correct_spelling(summary_text)
-        words = summary_text.split()
-        clean_summary = []
-        seen_phrases = set()
-        for word in words:
-            if word.lower() in key_phrases_set or word.isalpha() or word.lower() in [e.lower() for e in entities]:
-                if word.lower() not in seen_phrases:
-                    clean_summary.append(word)
-                    seen_phrases.add(word.lower())
-        summary_text = " ".join(clean_summary)
-        missing_phrases = [phrase for phrase in key_phrases_set if phrase not in summary_text.lower() and phrase in text.lower()]
-        missing_entities = [entity for entity in entities if entity.lower() not in summary_text.lower() and entity.lower() in [e.lower() for e in text.split()]]
-        if missing_phrases or missing_entities:
-            additional_text = " Additionally, key points include " + ", ".join(set(missing_phrases[:5] + missing_entities[:5])) + "."
-            summary_text += additional_text
-
-    precision_score = evaluate_precision(text, summary_text)
-    if precision_score < 0.85:
-        stop_words = set(stopwords.words('english'))
-        word_frequencies = Counter(word.lower() for word in word_tokenize(text) if word.lower() not in stop_words)
-        sentence_scores = parallel_sentence_scoring(sentences, word_frequencies, stop_words)
-        num_sentences = min(max(min_length // 10, 1), len(sentences))
-        top_sentences = sorted(sentence_scores.items(), key=lambda x: x[1], reverse=True)[:num_sentences]
-        summary_sentences = [sentences[i] for i, _ in top_sentences]
-        enhanced_summary = [enhance_sentence(sent) for sent in summary_sentences]
-        enhanced_summary = [enhance_student_language(sent) for sent in enhanced_summary]
-        summary_text = " ".join(enhanced_summary)[:max_length].strip() + "."
-        summary_sentences = [s.strip() + "." for s in summary_text.split(". ") if s.strip() and len(s.split()) > 2]
-        unique_sentences = []
-        for sent in summary_sentences:
-            if not any(cosine_similarity(sent.lower().split(), unique_sent.lower().split()) > 0.1 for unique_sent in unique_sentences):
-                unique_sentences.append(sent)
-        summary_text = " ".join(unique_sentences)
-        summary_text = correct_spelling(summary_text)
-        words = summary_text.split()
-        clean_summary = []
-        seen_phrases = set()
-        for word in words:
-            if word.lower() in key_phrases_set or word.isalpha() or word.lower() in [e.lower() for e in entities]:
-                if word.lower() not in seen_phrases:
-                    clean_summary.append(word)
-                    seen_phrases.add(word.lower())
-        summary_text = " ".join(clean_summary)
-        missing_phrases = [phrase for phrase in key_phrases_set if phrase not in summary_text.lower() and phrase in text.lower()]
-        missing_entities = [entity for entity in entities if entity.lower() not in summary_text.lower() and entity.lower() in [e.lower() for e in text.split()]]
-        if missing_phrases or missing_entities:
-            additional_text = " Additionally, key points include " + ", ".join(set(missing_phrases[:5] + missing_entities[:5])) + "."
-            summary_text += additional_text
 
     return summary_text
 
@@ -344,7 +264,7 @@ if page == "Summarize":
     else:
         st.markdown(f'<div class="word-counter">Word count: {word_count} / 20,000</div>', unsafe_allow_html=True)
 
-    length_option = st.select_slider("Choose summary length (words):", options=[150, 250, 400, 600], value=250, format_func=lambda x: f"{x} words")
+    length_option = st.select_slider("Choose summary length (words):", options=[150, 250, 400, 600], value=150, format_func=lambda x: f"{x} words")
     min_length, max_length, _ = (length_option, length_option + 100 if length_option < 600 else length_option + 400, length_option // 50)
 
     format_option = st.radio("Select summary format:", ["Paragraph", "Bullet Points"], horizontal=True, key="format_option")
@@ -374,7 +294,7 @@ if page == "Summarize":
 
             end_time = time.time()
             processing_time = end_time - start_time
-            if processing_time > 0.6:
+            if processing_time > 0.6 and len(text.split()) < 1000 or processing_time > 1.5:
                 st.warning(f"Summary took {processing_time:.2f} seconds—optimizing for speed!")
             loading_placeholder.empty()
             st.markdown(f"<div class='output-box'>{final_summary}</div>", unsafe_allow_html=True)
