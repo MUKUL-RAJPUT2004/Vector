@@ -112,9 +112,9 @@ def evaluate_precision(original_text, summary):
 
 def enhance_sentence(sentence):
     blob = TextBlob(sentence)
-    # Preserve sentence structure, filter only stopwords and excessive punctuation
+    # Preserve sentence structure, filter only stopwords
     words = [word for word, pos in blob.tags if pos not in ['DT', 'IN', 'TO', 'CC', 'UH'] and word.lower() not in stopwords.words('english')]
-    return " ".join(words) if words else sentence
+    return sentence if not words else " ".join(words)
 
 def enhance_student_language(text):
     words = text.split()
@@ -170,13 +170,14 @@ def generate_summary(text, min_length, max_length, format_option):
         max_length = min(max_length, input_words)
         min_length = max(10, input_words)
 
-    # NER with fallback
+    # NER with fallback and debug
     entities = []
     try:
         for sent in sent_tokenize(text[:10000]):
             for chunk in ne_chunk(pos_tag(word_tokenize(sent))):
                 if hasattr(chunk, 'label') and chunk.label() in ['PERSON', 'ORGANIZATION', 'GPE', 'EVENT']:
                     entities.extend([word for word, pos in chunk.leaves()])
+        st.write("NER entities detected:", entities)  # Debug print
     except LookupError:
         st.warning("NER failed due to missing NLTK data. Run 'python -m nltk.downloader all' or ensure 'punkt' is downloaded.")
     except Exception as e:
@@ -210,7 +211,7 @@ def generate_summary(text, min_length, max_length, format_option):
     summary_text = ". ".join(enhanced_summary)[:max_length].strip() + "."
 
     # Post-process for precision and spelling correction
-    summary_sentences = [s + "." for s in summary_text.split(". ") if s.strip() and len(s.split()) > 2]
+    summary_sentences = [s + "." for s in summary_text.split(". ") if s.strip() and len(s.split()) > 1]  # Relaxed length threshold
     unique_sentences = []
     for sent in summary_sentences:
         sent_words = sent.lower().split()
@@ -241,6 +242,7 @@ def generate_summary(text, min_length, max_length, format_option):
     else:
         summary_text = str(summary_text)
 
+    st.write("Final summary text:", summary_text)  # Debug print
     return summary_text
 
 if page == "Summarize":
