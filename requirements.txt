@@ -7,3 +7,5 @@ langdetect==1.0.9
 deep_translator
 textblob
 setuptools
+transformers
+torch  # For PyTorch, required by transformers

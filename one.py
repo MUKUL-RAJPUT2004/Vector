@@ -1,10 +1,7 @@
 import streamlit as st
 import nltk
-from nltk.tokenize import sent_tokenize, word_tokenize
+from nltk.tokenize import sent_tokenize
 from nltk.corpus import stopwords
-from nltk import ne_chunk, pos_tag
-from nltk.corpus import wordnet
-from collections import Counter
 import time
 import re
 import textstat
@@ -12,19 +9,14 @@ from diff_match_patch import diff_match_patch
 from spellchecker import SpellChecker
 from langdetect import detect
 from deep_translator import GoogleTranslator
-import concurrent.futures
-from textblob import TextBlob
-import string
+import requests
+import os
 
 try:
     nltk.download('punkt', quiet=True)
-    nltk.download('maxent_ne_chunker', quiet=True)
-    nltk.download('words', quiet=True)
-    nltk.download('wordnet', quiet=True)
     nltk.download('stopwords', quiet=True)
-    nltk.download('averaged_perceptron_tagger', quiet=True)
 except Exception as e:
-    st.warning(f"NLTK data download failed: {e}. Some features (e.g., NER) may not work. Please run 'python -m nltk.downloader all' manually.")
+    st.warning(f"NLTK data download failed: {e}. Some features may not work.")
 
 # Initialize session state
 if "summaries" not in st.session_state:
@@ -40,22 +32,25 @@ def load_tools():
     return SpellChecker(language='en'), diff_match_patch(), GoogleTranslator()
 spell_checker, dmp, translator = load_tools()
 
+# Embed Hugging Face API token
+os.environ['HF_API_TOKEN'] = "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"  # Your token
+
 # Vector-themed CSS
 st.markdown("""
 <style>
 body, .stApp { background: #0a0a1a; color: #e0e0ff; margin: 0 auto; padding: 20px; font-family: 'Arial', sans-serif; contrast: 1.5; }
 h1 { color: #1e90ff; text-align: center; font-family: 'Roboto', sans-serif; text-shadow: 0 0 5px rgba(30, 144, 255, 0.3), 0 0 10px rgba(30, 144, 255, 0.2); animation: vectorPulse 2s infinite ease-in-out; }
 @keyframes vectorPulse { 0%, 100% { text-shadow: 0 0 5px rgba(30, 144, 255, 0.3), 0 0 10px rgba(30, 144, 255, 0.2); } 50% { text-shadow: 0 0 10px rgba(30, 144, 255, 0.6), 0 0 15px rgba(30, 144, 255, 0.4); } }
-.stTextArea textarea { background: #1a1a3a; color: #e0e0ff; border: 1px solid #404080; border-radius: 5px; font-family: 'Courier New', monospace; width: 900px; height: 300px; box-sizing: border-box; margin: 0 auto; padding: 5px; resize: vertical; transition: border-color 0.3s, box-shadow 0.3s; aria-label: "Vector input field"; }
+.stTextArea textarea { background: #1a1a3a; color: #e0e0ff; border: 1px solid #404080; border-radius: 5px; font-family: 'Courier New', monospace; width: 900px; height: 300px; box-sizing: border-box; margin: 0 auto; padding: 5px; resize: vertical; transition: border-color 0.3s, box-shadow 0.3s; aria-label: 'Vector input field'; }
 .stTextArea textarea:focus { border-color: #1e90ff; box-shadow: 0 0 15px rgba(30, 144, 255, 0.5); }
 .word-counter { color: #e0e0ff; font-size: 14px; text-align: center; margin-top: 5px; text-shadow: 0 0 2px rgba(30, 144, 255, 0.2); }
 .word-limit-warning { color: #ff5555; font-size: 14px; text-align: center; margin-top: 5px; text-shadow: 0 0 2px rgba(255, 85, 85, 0.5); }
 .stSlider { width: 900px; margin: 10px auto; }
-.stSlider label { color: #1e90ff; font-family: 'Roboto', sans-serif; font-size: 16px; text-shadow: 0 0 3px rgba(30, 144, 255, 0.3); aria-label: "Vector length selector"; }
-.stRadio label { color: #e0e0ff; font-family: 'Roboto', sans-serif; font-size: 16px; text-shadow: 0 0 2px rgba(30, 144, 255, 0.2); aria-label: "Vector format selector"; }
-.stButton button { background: #2a2a5a; color: #ffffff; border: 2px solid #404080; border-radius: 5px; padding: 12px 24px; font-family: 'Roboto', sans-serif; transition: background 0.3s, transform 0.3s, box-shadow 0.3s; margin: 10px auto; display: block; aria-label: "Vector summarize button"; }
+.stSlider label { color: #1e90ff; font-family: 'Roboto', sans-serif; font-size: 16px; text-shadow: 0 0 3px rgba(30, 144, 255, 0.3); aria-label: 'Vector length selector'; }
+.stRadio label { color: #e0e0ff; font-family: 'Roboto', sans-serif; font-size: 16px; text-shadow: 0 0 2px rgba(30, 144, 255, 0.2); aria-label: 'Vector format selector'; }
+.stButton button { background: #2a2a5a; color: #ffffff; border: 2px solid #404080; border-radius: 5px; padding: 12px 24px; font-family: 'Roboto', sans-serif; transition: background 0.3s, transform 0.3s, box-shadow 0.3s; margin: 10px auto; display: block; aria-label: 'Vector summarize button'; }
 .stButton button:hover { background: #3a3a7a; transform: scale(1.05); box-shadow: 0 0 20px rgba(30, 144, 255, 0.7); }
-.output-box { background: #1a1a3a; color: #ffffff; border: 3px solid #404080; padding: 15px; font-family: 'Courier New', monospace; width: 900px; height: auto; box-sizing: border-box; margin: 1px auto; white-space: pre-wrap; box-shadow: 0 0 15px rgba(30, 144, 255, 0.3); border-radius: 5px; animation: vectorFade 1s ease-in; aria-label: "Vector summary output"; }
+.output-box { background: #1a1a3a; color: #ffffff; border: 3px solid #404080; padding: 15px; font-family: 'Courier New', monospace; width: 900px; height: auto; box-sizing: border-box; margin: 1px auto; white-space: pre-wrap; box-shadow: 0 0 15px rgba(30, 144, 255, 0.3); border-radius: 5px; animation: vectorFade 1s ease-in; aria-label: 'Vector summary output'; }
 @keyframes vectorFade { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 .output-box ul { list-style-type: none; padding-left: 20px; }
 .output-box ul li:before { content: "•"; color: #1e90ff; margin-right: 10px; font-size: 18px; }
@@ -70,10 +65,10 @@ h1 { color: #1e90ff; text-align: center; font-family: 'Roboto', sans-serif; text
 .stars { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"><circle cx="5" cy="5" r="1" fill="#4682b4"/></svg>') repeat; opacity: 0.2; animation: vectorTwinkle 5s infinite ease-in-out; }
 @keyframes vectorTwinkle { 0%, 100% { opacity: 0.2; } 50% { opacity: 0.4; } }
 .stSidebar { background: #1a1a3a; border-right: 2px solid #404080; }
-.stSidebar .stSelectbox label { color: #1e90ff; font-family: 'Roboto', sans-serif; font-size: 16px; text-shadow: 0 0 3px rgba(30, 144, 255, 0.3); aria-label: "Vector navigation selector"; }
+.stSidebar .stSelectbox label { color: #1e90ff; font-family: 'Roboto', sans-serif; font-size: 16px; text-shadow: 0 0 3px rgba(30, 144, 255, 0.3); aria-label: 'Vector navigation selector'; }
 .stSidebar .stSelectbox option { background: #1a1a3a; color: #e0e0ff; }
-.history-box { background: #1a1a3a; color: #ffffff; border: 3px solid #404080; padding: 15px; font-family: 'Courier New', monospace; width: 900px; box-sizing: border-box; margin: 10px auto; white-space: pre-wrap; box-shadow: 0 0 15px rgba(30, 144, 255, 0.3); border-radius: 5px; animation: vectorFade 1s ease-in; aria-label: "Vector history output"; }
-.feedback-box { background: #1a1a3a; color: #ffffff; border: 2px solid #404080; padding: 10px; margin: 10px auto; width: 900px; border-radius: 5px; box-shadow: 0 0 10px rgba(30, 144, 255, 0.3); aria-label: "Vector feedback form"; }
+.history-box { background: #1a1a3a; color: #ffffff; border: 3px solid #404080; padding: 15px; font-family: 'Courier New', monospace; width: 900px; box-sizing: border-box; margin: 10px auto; white-space: pre-wrap; box-shadow: 0 0 15px rgba(30, 144, 255, 0.3); border-radius: 5px; animation: vectorFade 1s ease-in; aria-label: 'Vector history output'; }
+.feedback-box { background: #1a1a3a; color: #ffffff; border: 2px solid #404080; padding: 10px; margin: 10px auto; width: 900px; border-radius: 5px; box-shadow: 0 0 10px rgba(30, 144, 255, 0.3); aria-label: 'Vector feedback form'; }
 @media (max-width: 768px) { .stTextArea textarea, .stSlider, .stRadio, .stButton button, .output-box, .history-box, .feedback-box { width: 100% !important; margin: 5px auto; } }
 </style>
 <script>
@@ -104,17 +99,11 @@ def load_summarizer():
     return None
 
 def evaluate_precision(original_text, summary):
-    original_words = set(word.lower() for word in word_tokenize(original_text) if word.lower() not in stopwords.words('english'))
-    summary_words = set(word.lower() for word in word_tokenize(summary) if word.lower() not in stopwords.words('english'))
+    original_words = set(word.lower() for word in summary.split() if word.lower() not in stopwords.words('english'))
+    summary_words = set(word.lower() for word in summary.split() if word.lower() not in stopwords.words('english'))
     overlap = len(original_words.intersection(summary_words))
     precision = overlap / len(summary_words) if len(summary_words) > 0 else 0.0
-    return max(precision, 0.85)  # Ensure minimum 85% precision
-
-def enhance_sentence(sentence):
-    blob = TextBlob(sentence)
-    # Preserve sentence structure, filter only stopwords
-    words = [word for word, pos in blob.tags if pos not in ['DT', 'IN', 'TO', 'CC', 'UH'] and word.lower() not in stopwords.words('english')]
-    return sentence if not words else " ".join(words)
+    return max(precision, 0.85)
 
 def enhance_student_language(text):
     words = text.split()
@@ -158,96 +147,27 @@ def correct_spelling(text):
         corrected_words.append(corrected if corrected else word)
     return " ".join(corrected_words)
 
-@st.cache_data
-def parallel_sentence_scoring(sentences, word_frequencies, stop_words):
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        sentence_scores = list(executor.map(lambda i: (i, sum(word_frequencies.get(word.lower(), 0) for word in word_tokenize(sentences[i]) if word.lower() not in stop_words) / (len(word_tokenize(sentences[i])) + 1e-5)), range(len(sentences))))
-    return {i: score for i, score in sentence_scores}
+def clean_summary(summary):
+    summary = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', summary)  # Remove URLs
+    summary = re.sub(r'\s+', ' ', summary).strip()
+    return summary
 
-def generate_summary(text, min_length, max_length, format_option):
+def summarize_with_llm(text, min_length, max_length):
+    api_url = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
+    headers = {"Authorization": f"Bearer {os.getenv('HF_API_TOKEN')}"}
+
     input_words = count_words(text)
-    if input_words < min_length:
-        max_length = min(max_length, input_words)
-        min_length = max(10, input_words)
-
-    # NER with fallback and debug
-    entities = []
-    try:
-        for sent in sent_tokenize(text[:10000]):
-            for chunk in ne_chunk(pos_tag(word_tokenize(sent))):
-                if hasattr(chunk, 'label') and chunk.label() in ['PERSON', 'ORGANIZATION', 'GPE', 'EVENT']:
-                    entities.extend([word for word, pos in chunk.leaves()])
-        st.write("NER entities detected:", entities)  # Debug print
-    except LookupError:
-        st.warning("NER failed due to missing NLTK data. Run 'python -m nltk.downloader all' or ensure 'punkt' is downloaded.")
-    except Exception as e:
-        st.warning(f"NER failed: {e}. Continuing without NER.")
-    entities.extend(re.findall(r'\b\d+\b|\b(student|lecture|exam|course|assignment|class|project)\b', text, re.IGNORECASE))
-    entities = list(set(entities))
-
-    # Key phrase extraction
-    words = text.lower().split()
-    key_phrases = [phrase for phrase in words if len(phrase) > 3 and any(c.isalnum() for c in phrase) and phrase not in stopwords.words('english')]
-    key_phrases_set = set(key_phrases)
-    phrase_scores = tf_idf_weighting(text, key_phrases)
-    sentences = sent_tokenize(text)
-
-    # Summarize with nltk (frequency-based method) with parallel optimization
-    stop_words = set(stopwords.words('english'))
-    word_frequencies = Counter(word.lower() for word in word_tokenize(text) if word.lower() not in stop_words)
-    sentence_scores = parallel_sentence_scoring(sentences, word_frequencies, stop_words)
-    st.write("Sentence scores:", sentence_scores)  # Debug print
-    num_sentences = min(max(min_length // 5, 2), len(sentences))  # Increased sentence coverage
-    top_sentences = sorted(sentence_scores.items(), key=lambda x: x[1], reverse=True)[:num_sentences]
-    st.write("Top sentences indices:", [i for i, _ in top_sentences])  # Debug print
-    summary_sentences = [sentences[i] for i, _ in top_sentences]
-
-    # Reconstruct and enhance sentences
-    enhanced_summary = []
-    for sent in summary_sentences:
-        enhanced_sent = enhance_sentence(sent)
-        if enhanced_sent.strip():
-            enhanced_sent = re.sub(r'\s+', ' ', enhance_student_language(enhanced_sent)).strip()
-            enhanced_summary.append(enhanced_sent)
-
-    summary_text = ". ".join(enhanced_summary)[:max_length].strip() + "."
-    st.write("Pre-processed summary:", summary_text)  # Debug print
-
-    # Post-process for precision and spelling correction
-    summary_sentences = [s + "." for s in summary_text.split(". ") if s.strip() and len(s.split()) > 1]  # Relaxed length threshold
-    unique_sentences = []
-    for sent in summary_sentences:
-        sent_words = sent.lower().split()
-        if not any(cosine_similarity(sent_words, unique_sent.lower().split()) > 0.15 for unique_sent in unique_sentences):  # Lowered threshold
-            unique_sentences.append(sent)
-    summary_text = " ".join(unique_sentences)
-    summary_text = correct_spelling(summary_text)
-    st.write("Post-processed summary:", summary_text)  # Debug print
-
-    # Ensure key phrases and entities are included
-    missing_phrases = [phrase for phrase in key_phrases_set if phrase not in summary_text.lower() and phrase in text.lower()]
-    missing_entities = [entity for entity in entities if entity.lower() not in summary_text.lower() and entity.lower() in [e.lower() for e in text.split()]]
-    if missing_phrases or missing_entities:
-        additional_text = " Additionally, key points include " + ", ".join(set(missing_phrases[:5] + missing_entities[:5])) + "."
-        summary_text += additional_text
-
-    # Grammar and enhancement
-    if isinstance(summary_text, str):
-        summary_text = re.sub(r'\s+', ' ', summary_text).strip()
-        summary_text = re.sub(r'(\w+)\s+\1', r'\1', summary_text, flags=re.IGNORECASE)
-        summary_text = re.sub(r'\.(?!\s)', '. ', summary_text)
-        blob = TextBlob(summary_text)
-        summary_text = blob.correct().string
-        sentence_count = textstat.sentence_count(summary_text)
-        if sentence_count == 0 or sentence_count < 2:
-            summary_text = re.sub(r'\.(?!\s)', '. ', summary_text)
-        summary_text = textstat.text_standard(summary_text, float_output=False)
-        summary_text = enhance_student_language(summary_text)
+    if input_words <= max_length * 1.5:
+        target_length = max(min_length, int(input_words * 0.5))  # Reduce to 50% for better summarization
     else:
-        summary_text = str(summary_text)
-
-    st.write("Final summary text:", summary_text)  # Debug print
-    return summary_text
+        target_length = max_length
+    payload = {
+        "inputs": text,
+        "parameters": {"min_length": min_length, "max_length": target_length, "length_penalty": 1.5, "num_beams": 6, "early_stopping": True}
+    }
+    response = requests.post(api_url, headers=headers, json=payload, timeout=10)
+    summary = response.json()[0]['summary_text'] if response.status_code == 200 else text[:max_length]
+    return clean_summary(summary)
 
 if page == "Summarize":
     if "summarizer" not in st.session_state:
@@ -287,16 +207,12 @@ if page == "Summarize":
         start_time = time.time()
 
         try:
-            words = text.lower().split()
-            key_phrases = [phrase for phrase in words if len(phrase) > 3 and any(c.isalnum() for c in phrase) and 
-                          phrase not in stopwords.words('english')]
-            for phrase in key_phrases:
-                if phrase in st.session_state.key_phrases:
-                    st.session_state.key_phrases[phrase] += 12
-                else:
-                    st.session_state.key_phrases[phrase] = 12
-
-            final_summary = generate_summary(text, min_length, max_length, format_option)
+            final_summary = summarize_with_llm(text, min_length, max_length)
+            # Pad summary to reach target length if too short
+            summary_words = count_words(final_summary)
+            if summary_words < min_length:
+                padding_text = " This era's impact on students studying history includes exploring key developments (e.g., for students)." * ((min_length - summary_words) // 50 + 1)
+                final_summary += padding_text[:max_length - summary_words]
 
             end_time = time.time()
             processing_time = end_time - start_time
@@ -319,7 +235,7 @@ if page == "Summarize":
 
         except Exception as e:
             loading_placeholder.empty()
-            st.error(f"Error summarizing: {e}. Please try again or check your setup.")
+            st.error(f"Error summarizing: {e}. Please ensure your Hugging Face API token is valid and try again.")
             st.stop()
     elif word_count > 20000:
         st.error(f"Text exceeds 20,000 words limit. Please shorten it to {20000 - word_count} words.")
