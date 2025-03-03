@@ -196,8 +196,10 @@ def generate_summary(text, min_length, max_length, format_option):
     stop_words = set(stopwords.words('english'))
     word_frequencies = Counter(word.lower() for word in word_tokenize(text) if word.lower() not in stop_words)
     sentence_scores = parallel_sentence_scoring(sentences, word_frequencies, stop_words)
+    st.write("Sentence scores:", sentence_scores)  # Debug print
     num_sentences = min(max(min_length // 5, 2), len(sentences))  # Increased sentence coverage
     top_sentences = sorted(sentence_scores.items(), key=lambda x: x[1], reverse=True)[:num_sentences]
+    st.write("Top sentences indices:", [i for i, _ in top_sentences])  # Debug print
     summary_sentences = [sentences[i] for i, _ in top_sentences]
 
     # Reconstruct and enhance sentences
@@ -209,6 +211,7 @@ def generate_summary(text, min_length, max_length, format_option):
             enhanced_summary.append(enhanced_sent)
 
     summary_text = ". ".join(enhanced_summary)[:max_length].strip() + "."
+    st.write("Pre-processed summary:", summary_text)  # Debug print
 
     # Post-process for precision and spelling correction
     summary_sentences = [s + "." for s in summary_text.split(". ") if s.strip() and len(s.split()) > 1]  # Relaxed length threshold
@@ -219,6 +222,7 @@ def generate_summary(text, min_length, max_length, format_option):
             unique_sentences.append(sent)
     summary_text = " ".join(unique_sentences)
     summary_text = correct_spelling(summary_text)
+    st.write("Post-processed summary:", summary_text)  # Debug print
 
     # Ensure key phrases and entities are included
     missing_phrases = [phrase for phrase in key_phrases_set if phrase not in summary_text.lower() and phrase in text.lower()]
