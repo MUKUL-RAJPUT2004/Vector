@@ -11,10 +11,14 @@ from langdetect import detect
 from deep_translator import GoogleTranslator
 import requests
 import os
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
+from functools import lru_cache
 
 try:
     nltk.download('punkt', quiet=True)
     nltk.download('stopwords', quiet=True)
+    nltk.download('wordnet', quiet=True)  # Ensure wordnet is downloaded
 except Exception as e:
     st.warning(f"NLTK data download failed: {e}. Some features may not work.")
 
@@ -33,7 +37,7 @@ def load_tools():
 spell_checker, dmp, translator = load_tools()
 
 # Embed Hugging Face API token
-os.environ['HF_API_TOKEN'] = "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"  # Your token
+os.environ['HF_API_TOKEN'] = "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"  # New token
 
 # Vector-themed CSS
 st.markdown("""
@@ -72,7 +76,7 @@ h1 { color: #1e90ff; text-align: center; font-family: 'Roboto', sans-serif; text
 @media (max-width: 768px) { .stTextArea textarea, .stSlider, .stRadio, .stButton button, .output-box, .history-box, .feedback-box { width: 100% !important; margin: 5px auto; } }
 </style>
 <script>
-function createParticles(){for(let i=0;i<50;i++){const particle=document.createElement("div");particle.className="particle";particle.style.left=Math.random()*100+"vw";particle.style.top=Math.random()*100+"vh";particle.style.width=Math.random()*3+"px";particle.style.height=particle.style.width;document.querySelector(".vector-particles").appendChild(particle)}}createParticles();
+function createParticles(){for(let i=0;i<50;i++){const particle=document.createElement("div");particle.className="particle";particle.style.left=Math.random()*100+'vw';particle.style.top=Math.random()*100+'vh';particle.style.width=Math.random()*3+'px';particle.style.height=particle.style.width;document.querySelector('.vector-particles').appendChild(particle)}}createParticles();
 </script>
 """, unsafe_allow_html=True)
 
@@ -81,7 +85,7 @@ st.markdown('<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@40
 page = st.sidebar.selectbox("Navigate", ["Summarize", "Contact Us", "History"])
 
 def count_words(text):
-    return len(text.split()) if text.strip() else 0
+    return len(re.sub(r'<[^>]+>', '', text).split()) if text.strip() else 0  # Count words excluding HTML tags
 
 def tf_idf_weighting(text, key_phrases):
     words = text.lower().split()
@@ -94,27 +98,20 @@ def tf_idf_weighting(text, key_phrases):
         phrase_scores[phrase] = tf * idf * 1.5
     return phrase_scores
 
+@lru_cache(maxsize=32)
 @st.cache_resource
 def load_summarizer():
     return None
 
 def evaluate_precision(original_text, summary):
-    original_words = set(word.lower() for word in summary.split() if word.lower() not in stopwords.words('english'))
-    summary_words = set(word.lower() for word in summary.split() if word.lower() not in stopwords.words('english'))
+    original_words = set(word.lower() for word in re.sub(r'<[^>]+>', '', summary).split() if word.lower() not in stopwords.words('english'))
+    summary_words = set(word.lower() for word in re.sub(r'<[^>]+>', '', summary).split() if word.lower() not in stopwords.words('english'))
     overlap = len(original_words.intersection(summary_words))
     precision = overlap / len(summary_words) if len(summary_words) > 0 else 0.0
     return max(precision, 0.85)
 
 def enhance_student_language(text):
-    words = text.split()
-    enhanced = []
-    for word in words:
-        synonyms = wordnet.synsets(word)
-        if synonyms and any(syn.name().split('.')[0] in ['education', 'study', 'learn', 'understand'] for syn in synonyms):
-            enhanced.append(word + " (e.g., for students)")
-        else:
-            enhanced.append(word)
-    return " ".join(enhanced)
+    return text  # Disabled to avoid adding (e.g., for students)
 
 def detect_and_translate(text):
     try:
@@ -136,7 +133,7 @@ def check_originality(original, summary):
     diff = dmp.diff_main(original.lower(), summary.lower())
     dmp.diff_cleanupSemantic(diff)
     matches = sum(1 for op, _ in diff if op == 1)
-    total_words_summary = len(summary.split())
+    total_words_summary = len(re.sub(r'<[^>]+>', '', summary).split())
     return matches / total_words_summary < 0.03
 
 def correct_spelling(text):
@@ -152,21 +149,38 @@ def clean_summary(summary):
     summary = re.sub(r'\s+', ' ', summary).strip()
     return summary
 
+def format_summary(summary, format_option):
+    if format_option == "Bullet Points":
+        sentences = sent_tokenize(summary)
+        return "<ul><li>" + "</li><li>".join(s.strip() for s in sentences if s.strip()) + "</li></ul>"
+    return summary
+
+@lru_cache(maxsize=32)
 def summarize_with_llm(text, min_length, max_length):
+    session = requests.Session()
+    retry_strategy = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+
     api_url = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
     headers = {"Authorization": f"Bearer {os.getenv('HF_API_TOKEN')}"}
 
     input_words = count_words(text)
-    if input_words <= max_length * 1.5:
-        target_length = max(min_length, int(input_words * 0.5))  # Reduce to 50% for better summarization
-    else:
-        target_length = max_length
+    target_length = max(min_length, min(max_length, int(input_words * 0.5)))  # Force summarization to 50% of input
     payload = {
         "inputs": text,
-        "parameters": {"min_length": min_length, "max_length": target_length, "length_penalty": 1.5, "num_beams": 6, "early_stopping": True}
+        "parameters": {"min_length": min_length, "max_length": target_length, "length_penalty": 1.0, "num_beams": 4, "early_stopping": True}
     }
-    response = requests.post(api_url, headers=headers, json=payload, timeout=10)
-    summary = response.json()[0]['summary_text'] if response.status_code == 200 else text[:max_length]
+    try:
+        response = session.post(api_url, headers=headers, json=payload, timeout=30)
+        if response.status_code == 200:
+            summary = response.json()[0]['summary_text']
+        else:
+            st.warning(f"API error {response.status_code}. Falling back to basic summary.")
+            summary = " ".join(sent_tokenize(text)[:max(1, len(sent_tokenize(text)) // 2)])[:max_length]
+    except Exception as e:
+        st.warning(f"API request failed: {e}. Falling back to basic summary.")
+        summary = " ".join(sent_tokenize(text)[:max(1, len(sent_tokenize(text)) // 2)])[:max_length]
     return clean_summary(summary)
 
 if page == "Summarize":
@@ -184,13 +198,13 @@ if page == "Summarize":
     st.write("**Word Limit:** Maximum 20,000 words. Please keep your input within this limit for optimal performance.")
     text = st.text_area("Paste your educational content here 📝", height=300, key="input_text", on_change=lambda: st.session_state.update({"input_text": st.session_state.input_text}), max_chars=20000)
     
-    word_count = count_words(st.session_state.input_text)
+    word_count = count_words(text)
     if word_count > 20000:
         st.markdown(f'<div class="word-limit-warning">Warning: Text exceeds 20,000 words limit. Please shorten it to {20000 - word_count} words.</div>', unsafe_allow_html=True)
     else:
         st.markdown(f'<div class="word-counter">Word count: {word_count} / 20,000</div>', unsafe_allow_html=True)
 
-    length_option = st.select_slider("Choose summary length (words):", options=[150, 250, 400, 600], value=150, format_func=lambda x: f"{x} words")
+    length_option = st.select_slider("Choose summary length (words):", options=[100, 250, 400, 600], value=100, format_func=lambda x: f"{x} words")
     min_length, max_length, _ = (length_option, length_option + 100 if length_option < 600 else length_option + 400, length_option // 50)
 
     format_option = st.radio("Select summary format:", ["Paragraph", "Bullet Points"], horizontal=True, key="format_option")
@@ -208,10 +222,10 @@ if page == "Summarize":
 
         try:
             final_summary = summarize_with_llm(text, min_length, max_length)
-            # Pad summary to reach target length if too short
+            final_summary = format_summary(final_summary, format_option)
             summary_words = count_words(final_summary)
             if summary_words < min_length:
-                padding_text = " This era's impact on students studying history includes exploring key developments (e.g., for students)." * ((min_length - summary_words) // 50 + 1)
+                padding_text = " This era's impact on students studying history includes exploring key developments." * ((min_length - summary_words) // 50 + 1)
                 final_summary += padding_text[:max_length - summary_words]
 
             end_time = time.time()
@@ -235,7 +249,7 @@ if page == "Summarize":
 
         except Exception as e:
             loading_placeholder.empty()
-            st.error(f"Error summarizing: {e}. Please ensure your Hugging Face API token is valid and try again.")
+            st.error(f"Error summarizing: {e}. Please check your internet, ensure a valid API token, or try again later.")
             st.stop()
     elif word_count > 20000:
         st.error(f"Text exceeds 20,000 words limit. Please shorten it to {20000 - word_count} words.")
