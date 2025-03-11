@@ -7,16 +7,20 @@ import requests
 import os
 from collections import Counter
 from transformers import pipeline
-from sentence_transformers import SentenceTransformer, util  # For semantic similarity
+try:
+    from sentence_transformers import SentenceTransformer, util  # For semantic similarity
+except ImportError:
+    SentenceTransformer, util = None, None  # Fallback if import fails
 
 try:
     nltk.download('punkt', quiet=True)
 except Exception as e:
     st.warning(f"NLTK error: {e}")
 
+# Initialize session state variables
 if "summaries" not in st.session_state:
     st.session_state.summaries = []
-    st.session_state.input_text = ""
+    st.session_state.input_text = ""  # Explicitly initialize
     st.session_state.summarizer = None
     st.session_state.sentence_model = None
 
@@ -38,6 +42,8 @@ def load_api_summarizer():
 # Load sentence transformer for semantic similarity
 def load_sentence_model():
     try:
+        if SentenceTransformer is None:
+            return None
         return SentenceTransformer('all-MiniLM-L6-v2')
     except Exception as e:
         st.warning(f"Failed to load sentence transformer: {e}. Skipping semantic scoring.")
@@ -57,12 +63,12 @@ st.markdown("""
 <style>
 body, .stApp { background: #0a0a1a; color: #e0e0ff; margin: 0; padding: 10px; font-family: 'Arial', sans-serif; }
 h1 { color: #1e90ff; text-align: center; font-family: 'Roboto', sans-serif; }
-.stTextArea textarea { background: #1a1a3a; color: #e0e0ff; border: 1px solid #404080; border-radius: 3px; width: 100%; max-width: 900px; height: 250px; margin: 0 auto; padding: 5px; }
+.stTextArea textarea { background: #1a1a3a; color: #e0e0ff; border: 1px solid #404080; border-radius: 3px; width: 90%; max-width: 900px; height: 250px; margin: 0 auto; padding: 5px; }
 .word-counter { color: #e0e0ff; font-size: 12px; text-align: center; }
 .word-limit-warning { color: #ff5555; font-size: 12px; text-align: center; }
 .stButton button { background: #2a2a5a; color: #fff; border: 1px solid #404080; border-radius: 3px; padding: 8px 16px; margin: 10px auto; display: block; }
 .stButton button:hover { background: #3a3a7a; }
-.output-box { background: #1a1a3a; color: #fff; border: 1px solid #404080; padding: 8px; width: 100%; max-width: 900px; margin: 5px auto; white-space: pre-wrap; }
+.output-box { background: #1a1a3a; color: #fff; border: 1px solid #404080; padding: 8px; width: 90%; max-width: 900px; margin: 5px auto; white-space: pre-wrap; }
 .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(10,10,26,0.7); display: flex; justify-content: center; align-items: center; }
 .loading-text { color: #1e90ff; font-size: 18px; }
 .history-box { background: #1a1a3a; color: #fff; border: 1px solid #404080; padding: 8px; width: 90%; max-width: 900px; margin: 5px auto; white-space: pre-wrap; }
@@ -77,8 +83,10 @@ if page == "Summarize":
     st.title("Vector 🚀 - Your Universal Text Summarizer")
     st.write("Fast, free, and versatile for all text needs! ✨ | Limit: 20,000 words.")
 
-    text = st.text_area("Paste text here 📝", height=250, key="input_text", max_chars=20000)
-    word_count = len(text.split()) if text.strip() else 0
+    # Use a manual input variable instead of widget key
+    text_input = st.text_area("Paste text here 📝", value=st.session_state.input_text, height=250, max_chars=20000)
+    st.session_state.input_text = text_input  # Update session state manually
+    word_count = len(text_input.split()) if text_input.strip() else 0
 
     if word_count > 20000:
         st.markdown(f'<div class="word-limit-warning">Exceeds 20,000 words. Reduce by {20000 - word_count}.</div>', unsafe_allow_html=True)
@@ -158,14 +166,14 @@ if page == "Summarize":
 
         start_time = time.time()
         try:
-            summary = summarize_text(text)
+            summary = summarize_text(text_input)
             end_time = time.time()
             time_taken = end_time - start_time
             loading.empty()
             st.markdown(f'<div class="output-box">{summary}</div>', unsafe_allow_html=True)
             st.markdown(f'<div style="color:#1e90ff;text-align:center;font-size:12px;">Done in {time_taken:.2f}s, 90%+ accuracy</div>', unsafe_allow_html=True)
 
-            st.session_state.summaries.append({"input": text[:50] + "..." if len(text) > 50 else text, "summary": summary, "time": time_taken})
+            st.session_state.summaries.append({"input": text_input[:50] + "..." if len(text_input) > 50 else text_input, "summary": summary, "time": time_taken})
         except Exception as e:
             loading.empty()
             st.error(f"Error: {e}. Retry or check setup.")
