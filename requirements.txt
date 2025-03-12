@@ -1,6 +1,6 @@
-transformers==4.35.2
-nltk==3.8.1
+transformers==4.40.2
+nltk==3.9.1
 streamlit==1.36.0
-requests==2.31.0
-sentence-transformers==2.2.2
-torch==1.13.1
+requests==2.32.3
+sentence-transformers==2.7.0
+torch==2.6.0
