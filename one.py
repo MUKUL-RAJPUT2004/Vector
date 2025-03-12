@@ -26,7 +26,7 @@ if "summaries" not in st.session_state:
     st.session_state.summaries = []
     st.session_state.input_text = ""
     st.session_state.summarizer = None
-    st.session_state.sentence_model = None
+    st.session_state.sentence_model = None  # Explicitly initialize as None
 
 def load_local_summarizer(timeout=20):
     try:
