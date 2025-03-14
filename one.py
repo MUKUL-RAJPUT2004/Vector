@@ -4,15 +4,49 @@ from nltk.tokenize import sent_tokenize
 import time
 import re
 import requests
+import os
+import shutil
 from collections import Counter
 
-# Attempt to download punkt_tab, with fallback if it fails
+# Fix NLTK download by removing existing punkt_tab directory if it exists
+nltk_data_path = os.path.join(os.path.expanduser('~'), 'nltk_data')
+punkt_tab_path = os.path.join(nltk_data_path, 'tokenizers', 'punkt_tab')
+if os.path.exists(punkt_tab_path):
+    try:
+        shutil.rmtree(punkt_tab_path)  # Remove the directory to avoid conflicts
+    except Exception as e:
+        st.warning(f"Failed to remove existing punkt_tab directory: {e}. Using fallback tokenizer.")
+
+# Attempt to download punkt_tab (English only to reduce conflicts)
 try:
-    nltk.download('punkt_tab', quiet=True)
+    nltk.download('punkt_tab', quiet=True, raise_on_error=True)
 except Exception as e:
     st.warning(f"NLTK error: {e}. Using fallback tokenizer.")
     def custom_tokenize(text):
-        return text.split('. ')
+        # Improved fallback tokenizer to handle common edge cases
+        sentences = []
+        current = ""
+        i = 0
+        while i < len(text):
+            char = text[i]
+            current += char
+            if char in '.!?':  # Potential sentence end
+                # Check if it's an abbreviation (e.g., "Dr.", "Mr.")
+                if i > 1 and text[i-1].isalpha() and text[i-2] == ' ':
+                    i += 1
+                    continue
+                # Check if followed by a space and capital letter (new sentence)
+                if i + 1 < len(text) and text[i+1] == ' ' and i + 2 < len(text) and text[i+2].isupper():
+                    sentences.append(current.strip())
+                    current = ""
+                    i += 2  # Skip the space
+                else:
+                    i += 1
+            else:
+                i += 1
+        if current.strip():
+            sentences.append(current.strip())
+        return sentences
     sent_tokenize = custom_tokenize  # Override sent_tokenize with fallback
 
 if "summaries" not in st.session_state:
@@ -81,7 +115,7 @@ if page == "Summarize":
         sentences = sent_tokenize(text)
         total_sentences = len(sentences)
         scored = [(score_sentence(s, keywords, i + 1, total_sentences), s) for i, s in enumerate(sentences)]
-        top_sentences = [s[1] for s in sorted(scored, reverse=True)[:max(3, int(len(sentences) * 0.3))]]  # Limit to 30% of sentences
+        top_sentences = [s[1] for s in sorted(scored, reverse=True)[:max(3, int(len(sentences) * 0.3))]]
         extractive_text = " ".join(top_sentences)
 
         # Retry API call up to 3 times with delay
