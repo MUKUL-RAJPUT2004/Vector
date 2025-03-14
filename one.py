@@ -81,20 +81,28 @@ if page == "Summarize":
         sentences = sent_tokenize(text)
         total_sentences = len(sentences)
         scored = [(score_sentence(s, keywords, i + 1, total_sentences), s) for i, s in enumerate(sentences)]
-        top_sentences = [s[1] for s in sorted(scored, reverse=True)[:max(3, int(len(sentences) * 0.6))]]
+        top_sentences = [s[1] for s in sorted(scored, reverse=True)[:max(3, int(len(sentences) * 0.3))]]  # Limit to 30% of sentences
         extractive_text = " ".join(top_sentences)
 
-        try:
-            api_url = st.session_state.summarizer["url"]
-            headers = st.session_state.summarizer["headers"]
-            target_length = max(100, int(word_count * 0.30))
-            payload = {"inputs": extractive_text, "parameters": {"max_length": target_length, "min_length": target_length // 2, "length_penalty": 1.0, "num_beams": 4, "no_repeat_ngram_size": 3}}
-            response = requests.post(api_url, headers=headers, json=payload, timeout=5)
-            response.raise_for_status()
-            summary = response.json()[0]['summary_text']
-        except Exception as e:
-            st.warning(f"API error: {e}. Using fallback.")
-            summary = " ".join(sent_tokenize(extractive_text)[:max(1, len(sent_tokenize(extractive_text)) // 2)])
+        # Retry API call up to 3 times with delay
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                api_url = st.session_state.summarizer["url"]
+                headers = st.session_state.summarizer["headers"]
+                target_length = max(100, int(word_count * 0.30))
+                payload = {"inputs": extractive_text, "parameters": {"max_length": target_length, "min_length": target_length // 2, "length_penalty": 1.0, "num_beams": 2, "no_repeat_ngram_size": 3}}
+                response = requests.post(api_url, headers=headers, json=payload, timeout=5)
+                response.raise_for_status()
+                summary = response.json()[0]['summary_text']
+                break
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2)  # Wait 2 seconds before retrying
+                    continue
+                st.warning(f"API error: {e}. Using fallback after {max_retries} attempts.")
+                summary = " ".join(sent_tokenize(extractive_text)[:3])  # Limit to 3 sentences in fallback
+                break
 
         summary = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+|www\.[a-zA-Z0-9.-]+|\b(?:Dr\.|Professor|University|College|Museum|Suicide|Prevention|National|call|visit|click here|confidential|published|established|located|at the|in this era|students can|great time|survey|newsletter|email|sign up)\b.*', '', summary, flags=re.IGNORECASE)
         summary = remove_repetitions(summary)
