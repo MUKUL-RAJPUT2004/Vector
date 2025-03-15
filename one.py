@@ -66,9 +66,11 @@ if page == "Summarize":
         return " ".join(unique_sentences)
 
     def score_sentence(sentence, keywords, position, total_sentences):
+        # Enhanced scoring: Prioritize sentences with keywords, position, and diversity
         keyword_score = len([w for w in re.findall(r'\w+', sentence.lower()) if w in keywords])
         position_score = (total_sentences - position + 1) / total_sentences
-        return keyword_score * 1.5 + position_score * 2 + len(sentence.split())
+        diversity_score = len(set(re.findall(r'\w+', sentence.lower()))) / len(re.findall(r'\w+', sentence.lower())) if len(re.findall(r'\w+', sentence.lower())) > 0 else 0
+        return keyword_score * 2.0 + position_score * 1.5 + diversity_score * 1.0
 
     def initialize_nltk():
         nltk_data_path = os.path.join(os.path.expanduser('~'), 'nltk_data')
@@ -124,12 +126,26 @@ if page == "Summarize":
         keywords = [k[0] for k in Counter(re.findall(r'\w+', text.lower())).most_common(5)]
         sentences = tokenizer(text)
         total_sentences = len(sentences)
+        total_words = len(re.findall(r'\w+', text))
 
-        # Adjust the number of sentences for short inputs
-        max_sentences = min(5, max(1, total_sentences // 2)) if total_sentences <= 5 else max(5, int(total_sentences * 0.3))
+        # Target 30% of the input word count for the summary
+        target_word_count = max(30, int(total_words * 0.3))  # At least 30 words
+
+        # Score sentences
         scored = [(score_sentence(s, keywords, i + 1, total_sentences), s) for i, s in enumerate(sentences)]
-        top_sentences = [s[1] for s in sorted(scored, reverse=True)[:max_sentences]]
-        extractive_text = " ".join(top_sentences)
+        sorted_sentences = [s[1] for s in sorted(scored, reverse=True)]
+
+        # Select sentences for extractive text until reaching target word count
+        extractive_sentences = []
+        current_word_count = 0
+        for sentence in sorted_sentences:
+            sentence_word_count = len(re.findall(r'\w+', sentence))
+            if current_word_count + sentence_word_count <= target_word_count:
+                extractive_sentences.append(sentence)
+                current_word_count += sentence_word_count
+            else:
+                break
+        extractive_text = " ".join(extractive_sentences)
 
         # Retry API call up to 3 times with delay
         max_retries = 3
@@ -137,7 +153,7 @@ if page == "Summarize":
             try:
                 api_url = st.session_state.summarizer["url"]
                 headers = st.session_state.summarizer["headers"]
-                target_length = max(50, min(200, int(word_count * 0.2)))
+                target_length = max(50, int(word_count * 0.3))  # Target 30% of input length
                 payload = {"inputs": extractive_text, "parameters": {"max_length": target_length, "min_length": max(30, target_length // 2), "length_penalty": 1.0, "num_beams": 2, "no_repeat_ngram_size": 3}}
                 response = requests.post(api_url, headers=headers, json=payload, timeout=10)
                 response.raise_for_status()
@@ -148,8 +164,16 @@ if page == "Summarize":
                     time.sleep(2)
                     continue
                 st.warning(f"API unavailable: {e}. Using backup method for summarization. We're working to improve this!")
-                # Enhanced fallback: Select top 30% sentences and refine
-                summary_sentences = top_sentences[:max(3, int(total_sentences * 0.3))]
+                # Fallback: Use sentences until reaching target word count
+                summary_sentences = []
+                current_word_count = 0
+                for sentence in sorted_sentences:
+                    sentence_word_count = len(re.findall(r'\w+', sentence))
+                    if current_word_count + sentence_word_count <= target_word_count:
+                        summary_sentences.append(sentence)
+                        current_word_count += sentence_word_count
+                    else:
+                        break
                 summary = remove_repetitions(" ".join(summary_sentences), summary_sentences)
                 break
 
