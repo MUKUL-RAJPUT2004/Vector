@@ -15,7 +15,7 @@ if "summaries" not in st.session_state:
 
 def load_api_summarizer():
     api_token = "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"
-    api_url = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"  # Switched to a more reliable model
+    api_url = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
     headers = {"Authorization": f"Bearer {api_token}"}
     return {"url": api_url, "headers": headers}
 
@@ -44,7 +44,7 @@ page = st.sidebar.selectbox("Navigate", ["Summarize", "History", "Contact"], key
 if page == "Summarize":
     st.title("Vector 🚀 - Your Universal Text Summarizer")
     st.write("Fast, free, and versatile for all text needs! ✨ | Limit: 20,000 words.")
-    st.info("Note: If summaries appear brief, our API service may be temporarily unavailable. We're working to improve this!")
+    st.write("Powered by advanced AI to deliver concise summaries in seconds. 🚀")
 
     text_input = st.text_area("Paste text here 📝", value=st.session_state.input_text, height=250, max_chars=20000)
     st.session_state.input_text = text_input
@@ -119,13 +119,16 @@ if page == "Summarize":
         # Initialize NLTK tokenizer at runtime
         tokenizer = initialize_nltk()
 
-        # Remove titles (lines starting with **...**) before tokenizing
+        # Remove titles (lines with **...**) before tokenizing
         text = re.sub(r'\*\*.*?\*\*', '', text).strip()
         keywords = [k[0] for k in Counter(re.findall(r'\w+', text.lower())).most_common(5)]
         sentences = tokenizer(text)
         total_sentences = len(sentences)
+
+        # Adjust the number of sentences for short inputs
+        max_sentences = min(5, max(1, total_sentences // 2)) if total_sentences <= 5 else max(5, int(total_sentences * 0.5))
         scored = [(score_sentence(s, keywords, i + 1, total_sentences), s) for i, s in enumerate(sentences)]
-        top_sentences = [s[1] for s in sorted(scored, reverse=True)[:max(5, int(len(sentences) * 0.5))]]
+        top_sentences = [s[1] for s in sorted(scored, reverse=True)[:max_sentences]]
         extractive_text = " ".join(top_sentences)
 
         # Retry API call up to 3 times with delay
@@ -134,7 +137,7 @@ if page == "Summarize":
             try:
                 api_url = st.session_state.summarizer["url"]
                 headers = st.session_state.summarizer["headers"]
-                target_length = max(100, int(word_count * 0.30))
+                target_length = max(50, int(word_count * 0.30))
                 payload = {"inputs": extractive_text, "parameters": {"max_length": target_length, "min_length": target_length // 2, "length_penalty": 1.0, "num_beams": 2, "no_repeat_ngram_size": 3}}
                 response = requests.post(api_url, headers=headers, json=payload, timeout=5)
                 response.raise_for_status()
@@ -144,9 +147,9 @@ if page == "Summarize":
                 if attempt < max_retries - 1:
                     time.sleep(2)
                     continue
-                st.warning(f"API error: {e}. Using fallback after {max_retries} attempts.")
-                # Use top 5 sentences directly in fallback
-                summary_sentences = top_sentences[:5]  # Strictly limit to 5 sentences
+                st.warning(f"API unavailable: {e}. Using backup method for summarization. We're working to improve this!")
+                # Use top sentences, but limit for short inputs
+                summary_sentences = top_sentences[:max(1, total_sentences // 2)]
                 summary = remove_repetitions(extractive_text, summary_sentences)
                 break
 
