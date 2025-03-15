@@ -8,47 +8,7 @@ import os
 import shutil
 from collections import Counter
 
-# Fix NLTK download by removing existing punkt_tab directory if it exists
-nltk_data_path = os.path.join(os.path.expanduser('~'), 'nltk_data')
-punkt_tab_path = os.path.join(nltk_data_path, 'tokenizers', 'punkt_tab')
-if os.path.exists(punkt_tab_path):
-    try:
-        shutil.rmtree(punkt_tab_path)  # Remove the directory to avoid conflicts
-    except Exception as e:
-        st.warning(f"Failed to remove existing punkt_tab directory: {e}. Using fallback tokenizer.")
-
-# Attempt to download punkt_tab (English only to reduce conflicts)
-try:
-    nltk.download('punkt_tab', quiet=True, raise_on_error=True)
-except Exception as e:
-    st.warning(f"NLTK error: {e}. Using fallback tokenizer.")
-    def custom_tokenize(text):
-        # Improved fallback tokenizer to handle common edge cases
-        sentences = []
-        current = ""
-        i = 0
-        while i < len(text):
-            char = text[i]
-            current += char
-            if char in '.!?':  # Potential sentence end
-                # Check if it's an abbreviation (e.g., "Dr.", "Mr.")
-                if i > 1 and text[i-1].isalpha() and text[i-2] == ' ':
-                    i += 1
-                    continue
-                # Check if followed by a space and capital letter (new sentence)
-                if i + 1 < len(text) and text[i+1] == ' ' and i + 2 < len(text) and text[i+2].isupper():
-                    sentences.append(current.strip())
-                    current = ""
-                    i += 2  # Skip the space
-                else:
-                    i += 1
-            else:
-                i += 1
-        if current.strip():
-            sentences.append(current.strip())
-        return sentences
-    sent_tokenize = custom_tokenize  # Override sent_tokenize with fallback
-
+# Initialize Session State
 if "summaries" not in st.session_state:
     st.session_state.summaries = []
     st.session_state.input_text = ""
@@ -110,9 +70,60 @@ if page == "Summarize":
         position_score = (total_sentences - position + 1) / total_sentences
         return keyword_score * 1.5 + position_score * 2 + len(sentence.split())
 
+    def initialize_nltk():
+        # Remove any existing NLTK data to start fresh
+        nltk_data_path = os.path.join(os.path.expanduser('~'), 'nltk_data')
+        punkt_tab_path = os.path.join(nltk_data_path, 'tokenizers', 'punkt_tab')
+        punkt_tab_zip = os.path.join(nltk_data_path, 'tokenizers', 'punkt_tab.zip')
+
+        # Remove punkt_tab directory and zip file if they exist
+        if os.path.exists(punkt_tab_path):
+            try:
+                shutil.rmtree(punkt_tab_path)
+            except Exception as e:
+                st.warning(f"Failed to remove punkt_tab directory: {e}.")
+        if os.path.exists(punkt_tab_zip):
+            try:
+                os.remove(punkt_tab_zip)
+            except Exception as e:
+                st.warning(f"Failed to remove punkt_tab.zip: {e}.")
+
+        # Download punkt_tab
+        try:
+            nltk.download('punkt_tab', quiet=True, raise_on_error=True)
+        except Exception as e:
+            st.warning(f"NLTK download error: {e}. Using fallback tokenizer.")
+            def custom_tokenize(text):
+                sentences = []
+                current = ""
+                i = 0
+                while i < len(text):
+                    char = text[i]
+                    current += char
+                    if char in '.!?':
+                        if i > 1 and text[i-1].isalpha() and text[i-2] == ' ':
+                            i += 1
+                            continue
+                        if i + 1 < len(text) and text[i+1] == ' ' and i + 2 < len(text) and text[i+2].isupper():
+                            sentences.append(current.strip())
+                            current = ""
+                            i += 2
+                        else:
+                            i += 1
+                    else:
+                        i += 1
+                if current.strip():
+                    sentences.append(current.strip())
+                return sentences
+            return custom_tokenize
+        return sent_tokenize
+
     def summarize_text(text):
+        # Initialize NLTK tokenizer at runtime
+        tokenizer = initialize_nltk()
+
         keywords = [k[0] for k in Counter(re.findall(r'\w+', text.lower())).most_common(5)]
-        sentences = sent_tokenize(text)
+        sentences = tokenizer(text)
         total_sentences = len(sentences)
         scored = [(score_sentence(s, keywords, i + 1, total_sentences), s) for i, s in enumerate(sentences)]
         top_sentences = [s[1] for s in sorted(scored, reverse=True)[:max(3, int(len(sentences) * 0.3))]]
@@ -132,10 +143,10 @@ if page == "Summarize":
                 break
             except requests.exceptions.RequestException as e:
                 if attempt < max_retries - 1:
-                    time.sleep(2)  # Wait 2 seconds before retrying
+                    time.sleep(2)
                     continue
                 st.warning(f"API error: {e}. Using fallback after {max_retries} attempts.")
-                summary = " ".join(sent_tokenize(extractive_text)[:3])  # Limit to 3 sentences in fallback
+                summary = " ".join(tokenizer(extractive_text)[:3])
                 break
 
         summary = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+|www\.[a-zA-Z0-9.-]+|\b(?:Dr\.|Professor|University|College|Museum|Suicide|Prevention|National|call|visit|click here|confidential|published|established|located|at the|in this era|students can|great time|survey|newsletter|email|sign up)\b.*', '', summary, flags=re.IGNORECASE)
