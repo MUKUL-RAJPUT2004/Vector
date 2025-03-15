@@ -126,7 +126,7 @@ if page == "Summarize":
         sentences = tokenizer(text)
         total_sentences = len(sentences)
         scored = [(score_sentence(s, keywords, i + 1, total_sentences), s) for i, s in enumerate(sentences)]
-        top_sentences = [s[1] for s in sorted(scored, reverse=True)[:max(3, int(len(sentences) * 0.3))]]
+        top_sentences = [s[1] for s in sorted(scored, reverse=True)[:max(5, int(len(sentences) * 0.5))]]  # Increased to 50% or 5 sentences
         extractive_text = " ".join(top_sentences)
 
         # Retry API call up to 3 times with delay
@@ -146,7 +146,7 @@ if page == "Summarize":
                     time.sleep(2)
                     continue
                 st.warning(f"API error: {e}. Using fallback after {max_retries} attempts.")
-                summary = " ".join(tokenizer(extractive_text)[:3])
+                summary = " ".join(tokenizer(extractive_text)[:5])  # Increased to 5 sentences in fallback
                 break
 
         summary = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+|www\.[a-zA-Z0-9.-]+|\b(?:Dr\.|Professor|University|College|Museum|Suicide|Prevention|National|call|visit|click here|confidential|published|established|located|at the|in this era|students can|great time|survey|newsletter|email|sign up)\b.*', '', summary, flags=re.IGNORECASE)
