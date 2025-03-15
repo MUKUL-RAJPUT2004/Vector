@@ -126,7 +126,7 @@ if page == "Summarize":
         total_sentences = len(sentences)
 
         # Adjust the number of sentences for short inputs
-        max_sentences = min(5, max(1, total_sentences // 2)) if total_sentences <= 5 else max(5, int(total_sentences * 0.5))
+        max_sentences = min(5, max(1, total_sentences // 2)) if total_sentences <= 5 else max(5, int(total_sentences * 0.3))
         scored = [(score_sentence(s, keywords, i + 1, total_sentences), s) for i, s in enumerate(sentences)]
         top_sentences = [s[1] for s in sorted(scored, reverse=True)[:max_sentences]]
         extractive_text = " ".join(top_sentences)
@@ -137,9 +137,9 @@ if page == "Summarize":
             try:
                 api_url = st.session_state.summarizer["url"]
                 headers = st.session_state.summarizer["headers"]
-                target_length = max(50, int(word_count * 0.30))
-                payload = {"inputs": extractive_text, "parameters": {"max_length": target_length, "min_length": target_length // 2, "length_penalty": 1.0, "num_beams": 2, "no_repeat_ngram_size": 3}}
-                response = requests.post(api_url, headers=headers, json=payload, timeout=5)
+                target_length = max(50, min(200, int(word_count * 0.2)))
+                payload = {"inputs": extractive_text, "parameters": {"max_length": target_length, "min_length": max(30, target_length // 2), "length_penalty": 1.0, "num_beams": 2, "no_repeat_ngram_size": 3}}
+                response = requests.post(api_url, headers=headers, json=payload, timeout=10)
                 response.raise_for_status()
                 summary = response.json()[0]['summary_text']
                 break
@@ -148,9 +148,9 @@ if page == "Summarize":
                     time.sleep(2)
                     continue
                 st.warning(f"API unavailable: {e}. Using backup method for summarization. We're working to improve this!")
-                # Use top sentences, but limit for short inputs
-                summary_sentences = top_sentences[:max(1, total_sentences // 2)]
-                summary = remove_repetitions(extractive_text, summary_sentences)
+                # Enhanced fallback: Select top 30% sentences and refine
+                summary_sentences = top_sentences[:max(3, int(total_sentences * 0.3))]
+                summary = remove_repetitions(" ".join(summary_sentences), summary_sentences)
                 break
 
         summary = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+|www\.[a-zA-Z0-9.-]+|\b(?:Dr\.|Professor|University|College|Museum|Suicide|Prevention|National|call|visit|click here|confidential|published|established|located|at the|in this era|students can|great time|survey|newsletter|email|sign up)\b.*', '', summary, flags=re.IGNORECASE)
@@ -199,6 +199,7 @@ elif page == "Contact":
     <div style="color:#e0e0ff;padding:10px;">
     <strong>Creator:</strong> Mukul Rajput<br>
     <strong>Email:</strong> <a href="mailto:rrtttxx@gmail.com" style="color:#1e90ff;">rrtttxx@gmail.com</a><br>
-    Share your feedback to improve Vector!
+    <strong>Feedback:</strong> <a href="https://forms.gle/your-feedback-form-link" style="color:#1e90ff;">Share your thoughts here!</a><br>
+    We’d love to hear your feedback to improve Vector!
     </div>
     """, unsafe_allow_html=True)
