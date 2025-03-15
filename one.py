@@ -15,7 +15,7 @@ if "summaries" not in st.session_state:
 
 def load_api_summarizer():
     api_token = "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"
-    api_url = "https://api-inference.huggingface.co/models/sshleifer/distilbart-cnn-6-6"
+    api_url = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"  # Switched to a more reliable model
     headers = {"Authorization": f"Bearer {api_token}"}
     return {"url": api_url, "headers": headers}
 
@@ -44,6 +44,7 @@ page = st.sidebar.selectbox("Navigate", ["Summarize", "History", "Contact"], key
 if page == "Summarize":
     st.title("Vector 🚀 - Your Universal Text Summarizer")
     st.write("Fast, free, and versatile for all text needs! ✨ | Limit: 20,000 words.")
+    st.info("Note: If summaries appear brief, our API service may be temporarily unavailable. We're working to improve this!")
 
     text_input = st.text_area("Paste text here 📝", value=st.session_state.input_text, height=250, max_chars=20000)
     st.session_state.input_text = text_input
@@ -54,8 +55,7 @@ if page == "Summarize":
     else:
         st.markdown(f'<div class="word-counter">Words: {word_count} / 20,000</div>', unsafe_allow_html=True)
 
-    def remove_repetitions(summary):
-        sentences = sent_tokenize(summary)
+    def remove_repetitions(summary, sentences):
         unique_sentences = []
         seen = set()
         for s in sentences:
@@ -71,12 +71,10 @@ if page == "Summarize":
         return keyword_score * 1.5 + position_score * 2 + len(sentence.split())
 
     def initialize_nltk():
-        # Remove any existing NLTK data to start fresh
         nltk_data_path = os.path.join(os.path.expanduser('~'), 'nltk_data')
         punkt_tab_path = os.path.join(nltk_data_path, 'tokenizers', 'punkt_tab')
         punkt_tab_zip = os.path.join(nltk_data_path, 'tokenizers', 'punkt_tab.zip')
 
-        # Remove punkt_tab directory and zip file if they exist
         if os.path.exists(punkt_tab_path):
             try:
                 shutil.rmtree(punkt_tab_path)
@@ -88,7 +86,6 @@ if page == "Summarize":
             except Exception as e:
                 st.warning(f"Failed to remove punkt_tab.zip: {e}.")
 
-        # Download punkt_tab
         try:
             nltk.download('punkt_tab', quiet=True, raise_on_error=True)
         except Exception as e:
@@ -122,11 +119,13 @@ if page == "Summarize":
         # Initialize NLTK tokenizer at runtime
         tokenizer = initialize_nltk()
 
+        # Remove titles (lines starting with **...**) before tokenizing
+        text = re.sub(r'\*\*.*?\*\*', '', text).strip()
         keywords = [k[0] for k in Counter(re.findall(r'\w+', text.lower())).most_common(5)]
         sentences = tokenizer(text)
         total_sentences = len(sentences)
         scored = [(score_sentence(s, keywords, i + 1, total_sentences), s) for i, s in enumerate(sentences)]
-        top_sentences = [s[1] for s in sorted(scored, reverse=True)[:max(5, int(len(sentences) * 0.5))]]  # Increased to 50% or 5 sentences
+        top_sentences = [s[1] for s in sorted(scored, reverse=True)[:max(5, int(len(sentences) * 0.5))]]
         extractive_text = " ".join(top_sentences)
 
         # Retry API call up to 3 times with delay
@@ -146,11 +145,12 @@ if page == "Summarize":
                     time.sleep(2)
                     continue
                 st.warning(f"API error: {e}. Using fallback after {max_retries} attempts.")
-                summary = " ".join(tokenizer(extractive_text)[:5])  # Increased to 5 sentences in fallback
+                # Use top 5 sentences directly in fallback
+                summary_sentences = top_sentences[:5]  # Strictly limit to 5 sentences
+                summary = remove_repetitions(extractive_text, summary_sentences)
                 break
 
         summary = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+|www\.[a-zA-Z0-9.-]+|\b(?:Dr\.|Professor|University|College|Museum|Suicide|Prevention|National|call|visit|click here|confidential|published|established|located|at the|in this era|students can|great time|survey|newsletter|email|sign up)\b.*', '', summary, flags=re.IGNORECASE)
-        summary = remove_repetitions(summary)
         summary = re.sub(r'\s+', ' ', summary).strip()
 
         return summary
