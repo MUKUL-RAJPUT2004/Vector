@@ -3,23 +3,21 @@ import nltk
 from nltk.tokenize import sent_tokenize
 import time
 import re
-import requests
 import os
 import shutil
 from collections import Counter
+from transformers import pipeline
 
 # Initialize Session State
 if "summaries" not in st.session_state:
     st.session_state.summaries = []
     st.session_state.input_text = ""
 
-def load_api_summarizer():
-    api_token = "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"
-    api_url = "https://api-inference.huggingface.co/models/google/pegasus-xsum"
-    headers = {"Authorization": f"Bearer {api_token}"}
-    return {"url": api_url, "headers": headers}
-
-st.session_state.summarizer = load_api_summarizer()
+# Initialize Local Summarizer
+try:
+    summarizer = pipeline("summarization", model="google/pegasus-xsum", device=-1)  # CPU
+except Exception as e:
+    st.warning(f"Failed to load local model: {e}. Using backup method.")
 
 st.markdown("""
 <style>
@@ -65,11 +63,12 @@ if page == "Summarize":
                 unique_sentences.append(s)
         return " ".join(unique_sentences)
 
-    def score_sentence(sentence, keywords, position, total_sentences):
+    def score_sentence(sentence, keywords, position, total_sentences, word_freq):
         keyword_score = len([w for w in re.findall(r'\w+', sentence.lower()) if w in keywords])
         position_score = (total_sentences - position + 1) / total_sentences
         diversity_score = len(set(re.findall(r'\w+', sentence.lower()))) / len(re.findall(r'\w+', sentence.lower())) if len(re.findall(r'\w+', sentence.lower())) > 0 else 0
-        return keyword_score * 2.0 + position_score * 1.5 + diversity_score * 1.0
+        centrality_score = sum(word_freq.get(word, 0) for word in re.findall(r'\w+', sentence.lower())) / len(re.findall(r'\w+', sentence.lower())) if len(re.findall(r'\w+', sentence.lower())) > 0 else 0
+        return keyword_score * 2.0 + position_score * 1.5 + diversity_score * 1.0 + centrality_score * 1.0
 
     def initialize_nltk():
         nltk_data_path = os.path.join(os.path.expanduser('~'), 'nltk_data')
@@ -120,9 +119,11 @@ if page == "Summarize":
         # Initialize NLTK tokenizer at runtime
         tokenizer = initialize_nltk()
 
-        # Remove titles (lines with **...**) before tokenizing
+        # Remove titles and irrelevant content
         text = re.sub(r'\*\*.*?\*\*', '', text).strip()
+        text = re.sub(r'⚡.*?(?=\n|$)|🤔.*?(?=\n|$)|Edited.*?(?=\n|$)|Questions.*?(?=\n|$)|Like.*?(?=\n|$)|Deepen.*?(?=\n|$)', '', text, flags=re.IGNORECASE)
         keywords = [k[0] for k in Counter(re.findall(r'\w+', text.lower())).most_common(5)]
+        word_freq = Counter(re.findall(r'\w+', text.lower()))
         sentences = tokenizer(text)
         total_sentences = len(sentences)
         total_words = len(re.findall(r'\w+', text))
@@ -130,52 +131,34 @@ if page == "Summarize":
         # Target 30% of the input word count for the summary
         target_word_count = max(30, int(total_words * 0.3))
 
-        # Score sentences
-        scored = [(score_sentence(s, keywords, i + 1, total_sentences), s) for i, s in enumerate(sentences)]
+        # Score sentences for fallback
+        scored = [(score_sentence(s, keywords, i + 1, total_sentences, word_freq), s) for i, s in enumerate(sentences)]
         sorted_sentences = [s[1] for s in sorted(scored, reverse=True)]
 
-        # Select sentences for extractive text (pre-summarize to reduce API load)
-        extractive_sentences = []
-        current_word_count = 0
-        max_extractive_words = min(500, total_words)
-        for sentence in sorted_sentences:
-            sentence_word_count = len(re.findall(r'\w+', sentence))
-            if current_word_count + sentence_word_count <= max_extractive_words:
-                extractive_sentences.append(sentence)
-                current_word_count += sentence_word_count
-            else:
-                break
-        extractive_text = " ".join(extractive_sentences)
-
-        # Retry API call up to 3 times with delay
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                api_url = st.session_state.summarizer["url"]
-                headers = st.session_state.summarizer["headers"]
-                target_length = max(50, int(total_words * 0.3))
-                payload = {"inputs": extractive_text, "parameters": {"max_length": target_length, "min_length": max(30, target_length // 2), "length_penalty": 1.0, "num_beams": 2, "no_repeat_ngram_size": 3}}
-                response = requests.post(api_url, headers=headers, json=payload, timeout=10)
-                response.raise_for_status()
-                summary = response.json()[0]['summary_text']
-                break
-            except requests.exceptions.RequestException as e:
-                if attempt < max_retries - 1:
-                    time.sleep(2)
-                    continue
-                st.warning(f"API unavailable: {e}. Using backup method for summarization. We're working to improve this!")
-                # Fallback: Use sentences until reaching target word count
-                summary_sentences = []
-                current_word_count = 0
-                for sentence in sorted_sentences:
-                    sentence_word_count = len(re.findall(r'\w+', sentence))
-                    if current_word_count + sentence_word_count <= target_word_count:
-                        summary_sentences.append(sentence)
-                        current_word_count += sentence_word_count
-                    else:
-                        break
-                summary = remove_repetitions(" ".join(summary_sentences), summary_sentences)
-                break
+        # Try local summarization with google/pegasus-xsum
+        try:
+            target_length = max(50, int(total_words * 0.3))
+            summary_dict = summarizer(text, max_length=target_length, min_length=max(30, target_length // 2), do_sample=False)
+            summary = summary_dict[0]['summary_text']
+        except Exception as e:
+            st.warning(f"Local summarization failed: {e}. Using backup method.")
+            # Fallback: Select sentences until reaching target word count
+            summary_sentences = []
+            current_word_count = 0
+            for sentence in sorted_sentences:
+                sentence_word_count = len(re.findall(r'\w+', sentence))
+                if current_word_count + sentence_word_count <= target_word_count:
+                    summary_sentences.append(sentence)
+                    current_word_count += sentence_word_count
+                else:
+                    # Trim the last sentence to meet the target word count exactly
+                    remaining_words = target_word_count - current_word_count
+                    if remaining_words > 10:  # Only trim if significant words remain
+                        words = re.findall(r'\w+', sentence)
+                        trimmed_sentence = " ".join(words[:remaining_words]) + "..."
+                        summary_sentences.append(trimmed_sentence)
+                    break
+            summary = remove_repetitions(" ".join(summary_sentences), summary_sentences)
 
         summary = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+|www\.[a-zA-Z0-9.-]+|\b(?:Dr\.|Professor|University|College|Museum|Suicide|Prevention|National|call|visit|click here|confidential|published|established|located|at the|in this era|students can|great time|survey|newsletter|email|sign up)\b.*', '', summary, flags=re.IGNORECASE)
         summary = re.sub(r'\s+', ' ', summary).strip()
