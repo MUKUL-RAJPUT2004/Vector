@@ -15,7 +15,7 @@ if "summaries" not in st.session_state:
 
 def load_api_summarizer():
     api_token = "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"
-    api_url = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
+    api_url = "https://api-inference.huggingface.co/models/google/pegasus-xsum"
     headers = {"Authorization": f"Bearer {api_token}"}
     return {"url": api_url, "headers": headers}
 
@@ -66,7 +66,6 @@ if page == "Summarize":
         return " ".join(unique_sentences)
 
     def score_sentence(sentence, keywords, position, total_sentences):
-        # Enhanced scoring: Prioritize sentences with keywords, position, and diversity
         keyword_score = len([w for w in re.findall(r'\w+', sentence.lower()) if w in keywords])
         position_score = (total_sentences - position + 1) / total_sentences
         diversity_score = len(set(re.findall(r'\w+', sentence.lower()))) / len(re.findall(r'\w+', sentence.lower())) if len(re.findall(r'\w+', sentence.lower())) > 0 else 0
@@ -129,18 +128,19 @@ if page == "Summarize":
         total_words = len(re.findall(r'\w+', text))
 
         # Target 30% of the input word count for the summary
-        target_word_count = max(30, int(total_words * 0.3))  # At least 30 words
+        target_word_count = max(30, int(total_words * 0.3))
 
         # Score sentences
         scored = [(score_sentence(s, keywords, i + 1, total_sentences), s) for i, s in enumerate(sentences)]
         sorted_sentences = [s[1] for s in sorted(scored, reverse=True)]
 
-        # Select sentences for extractive text until reaching target word count
+        # Select sentences for extractive text (pre-summarize to reduce API load)
         extractive_sentences = []
         current_word_count = 0
+        max_extractive_words = min(500, total_words)
         for sentence in sorted_sentences:
             sentence_word_count = len(re.findall(r'\w+', sentence))
-            if current_word_count + sentence_word_count <= target_word_count:
+            if current_word_count + sentence_word_count <= max_extractive_words:
                 extractive_sentences.append(sentence)
                 current_word_count += sentence_word_count
             else:
@@ -153,7 +153,7 @@ if page == "Summarize":
             try:
                 api_url = st.session_state.summarizer["url"]
                 headers = st.session_state.summarizer["headers"]
-                target_length = max(50, int(word_count * 0.3))  # Target 30% of input length
+                target_length = max(50, int(total_words * 0.3))
                 payload = {"inputs": extractive_text, "parameters": {"max_length": target_length, "min_length": max(30, target_length // 2), "length_penalty": 1.0, "num_beams": 2, "no_repeat_ngram_size": 3}}
                 response = requests.post(api_url, headers=headers, json=payload, timeout=10)
                 response.raise_for_status()
@@ -223,7 +223,7 @@ elif page == "Contact":
     <div style="color:#e0e0ff;padding:10px;">
     <strong>Creator:</strong> Mukul Rajput<br>
     <strong>Email:</strong> <a href="mailto:rrtttxx@gmail.com" style="color:#1e90ff;">rrtttxx@gmail.com</a><br>
-    <strong>Feedback:</strong> <a href="https://forms.gle/your-feedback-form-link" style="color:#1e90ff;">Share your thoughts here!</a><br>
+    <strong>Feedback:</strong> <a href="https://forms.gle/sk91cmKP2MnVJ3999" style="color:#1e90ff;">Share your thoughts here!</a><br>
     We’d love to hear your feedback to improve Vector!
     </div>
     """, unsafe_allow_html=True)
