@@ -8,23 +8,21 @@ import shutil
 from collections import Counter
 from transformers import pipeline
 
+# Cache the summarizer to load it once
+@st.cache_resource
+def load_summarizer():
+    try:
+        return pipeline("summarization", model="facebook/bart-large-cnn", device=-1)  # CPU
+    except Exception as e:
+        st.warning(f"Failed to load facebook/bart-large-cnn: {e}. Using backup method.")
+        return None
+
+summarizer = load_summarizer()
+
 # Initialize Session State
 if "summaries" not in st.session_state:
     st.session_state.summaries = []
     st.session_state.input_text = ""
-
-# Initialize Local Summarizer
-summarizer = None
-try:
-    # Try loading google/pegasus-xsum (larger model)
-    summarizer = pipeline("summarization", model="google/pegasus-xsum", device=-1)  # CPU
-except Exception as e:
-    st.warning(f"Failed to load google/pegasus-xsum: {e}. Trying a lighter model.")
-    try:
-        # Fallback to a lighter model
-        summarizer = pipeline("summarization", model="philschmid/bart-large-cnn-samsum", device=-1)  # CPU
-    except Exception as e:
-        st.warning(f"Failed to load fallback model: {e}. Using backup method.")
 
 st.markdown("""
 <style>
@@ -138,10 +136,6 @@ if page == "Summarize":
         # Target 30% of the input word count for the summary
         target_word_count = max(30, int(total_words * 0.3))
 
-        # Score sentences for fallback
-        scored = [(score_sentence(s, keywords, i + 1, total_sentences, word_freq), s) for i, s in enumerate(sentences)]
-        sorted_sentences = [s[1] for s in sorted(scored, reverse=True)]
-
         # Try local summarization
         if summarizer:
             try:
@@ -153,16 +147,15 @@ if page == "Summarize":
                 # Fallback: Select sentences until reaching target word count
                 summary_sentences = []
                 current_word_count = 0
-                for sentence in sorted_sentences:
-                    sentence_word_count = len(re.findall(r'\w+', sentence))
+                for sentence in sorted([(score_sentence(s, keywords, i + 1, total_sentences, word_freq), s) for i, s in enumerate(sentences)], reverse=True):
+                    sentence_word_count = len(re.findall(r'\w+', sentence[1]))
                     if current_word_count + sentence_word_count <= target_word_count:
-                        summary_sentences.append(sentence)
+                        summary_sentences.append(sentence[1])
                         current_word_count += sentence_word_count
                     else:
-                        # Trim the last sentence to meet the target word count exactly
                         remaining_words = target_word_count - current_word_count
-                        if remaining_words > 10:  # Only trim if significant words remain
-                            words = re.findall(r'\w+', sentence)
+                        if remaining_words > 10:
+                            words = re.findall(r'\w+', sentence[1])
                             trimmed_sentence = " ".join(words[:remaining_words]) + "..."
                             summary_sentences.append(trimmed_sentence)
                         break
@@ -171,16 +164,15 @@ if page == "Summarize":
             # Fallback: Select sentences until reaching target word count
             summary_sentences = []
             current_word_count = 0
-            for sentence in sorted_sentences:
-                sentence_word_count = len(re.findall(r'\w+', sentence))
+            for sentence in sorted([(score_sentence(s, keywords, i + 1, total_sentences, word_freq), s) for i, s in enumerate(sentences)], reverse=True):
+                sentence_word_count = len(re.findall(r'\w+', sentence[1]))
                 if current_word_count + sentence_word_count <= target_word_count:
-                    summary_sentences.append(sentence)
+                    summary_sentences.append(sentence[1])
                     current_word_count += sentence_word_count
                 else:
-                    # Trim the last sentence to meet the target word count exactly
                     remaining_words = target_word_count - current_word_count
-                    if remaining_words > 10:  # Only trim if significant words remain
-                        words = re.findall(r'\w+', sentence)
+                    if remaining_words > 10:
+                        words = re.findall(r'\w+', sentence[1])
                         trimmed_sentence = " ".join(words[:remaining_words]) + "..."
                         summary_sentences.append(trimmed_sentence)
                     break
