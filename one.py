@@ -14,10 +14,17 @@ if "summaries" not in st.session_state:
     st.session_state.input_text = ""
 
 # Initialize Local Summarizer
+summarizer = None
 try:
+    # Try loading google/pegasus-xsum (larger model)
     summarizer = pipeline("summarization", model="google/pegasus-xsum", device=-1)  # CPU
 except Exception as e:
-    st.warning(f"Failed to load local model: {e}. Using backup method.")
+    st.warning(f"Failed to load google/pegasus-xsum: {e}. Trying a lighter model.")
+    try:
+        # Fallback to a lighter model
+        summarizer = pipeline("summarization", model="philschmid/bart-large-cnn-samsum", device=-1)  # CPU
+    except Exception as e:
+        st.warning(f"Failed to load fallback model: {e}. Using backup method.")
 
 st.markdown("""
 <style>
@@ -135,13 +142,32 @@ if page == "Summarize":
         scored = [(score_sentence(s, keywords, i + 1, total_sentences, word_freq), s) for i, s in enumerate(sentences)]
         sorted_sentences = [s[1] for s in sorted(scored, reverse=True)]
 
-        # Try local summarization with google/pegasus-xsum
-        try:
-            target_length = max(50, int(total_words * 0.3))
-            summary_dict = summarizer(text, max_length=target_length, min_length=max(30, target_length // 2), do_sample=False)
-            summary = summary_dict[0]['summary_text']
-        except Exception as e:
-            st.warning(f"Local summarization failed: {e}. Using backup method.")
+        # Try local summarization
+        if summarizer:
+            try:
+                target_length = max(50, int(total_words * 0.3))
+                summary_dict = summarizer(text, max_length=target_length, min_length=max(30, target_length // 2), do_sample=False)
+                summary = summary_dict[0]['summary_text']
+            except Exception as e:
+                st.warning(f"Local summarization failed: {e}. Using backup method.")
+                # Fallback: Select sentences until reaching target word count
+                summary_sentences = []
+                current_word_count = 0
+                for sentence in sorted_sentences:
+                    sentence_word_count = len(re.findall(r'\w+', sentence))
+                    if current_word_count + sentence_word_count <= target_word_count:
+                        summary_sentences.append(sentence)
+                        current_word_count += sentence_word_count
+                    else:
+                        # Trim the last sentence to meet the target word count exactly
+                        remaining_words = target_word_count - current_word_count
+                        if remaining_words > 10:  # Only trim if significant words remain
+                            words = re.findall(r'\w+', sentence)
+                            trimmed_sentence = " ".join(words[:remaining_words]) + "..."
+                            summary_sentences.append(trimmed_sentence)
+                        break
+                summary = remove_repetitions(" ".join(summary_sentences), summary_sentences)
+        else:
             # Fallback: Select sentences until reaching target word count
             summary_sentences = []
             current_word_count = 0
