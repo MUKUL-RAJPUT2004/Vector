@@ -25,13 +25,7 @@ h1 { color: #1e90ff; text-align: center; font-family: 'Roboto', sans-serif; }
 .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(10,10,26,0.7); display: flex; justify-content: center; align-items: center; }
 .loading-text { color: #1e90ff; font-size: 18px; }
 .history-box { background: #1a1a3a; color: #fff; border: 1px solid #404080; padding: 8px; width: 90%; max-width: 900px; margin: 5px auto; white-space: pre-wrap; }
-.analytics-box { background: #1a1a3a; color: #e0e0ff; border: 1px solid #404080; padding: 8px; width: 90%; max-width: 900px; margin: 5px auto; text-align: center; }
-.analytics-box table { width: 100%; border-collapse: collapse; margin: 0 auto; }
-.analytics-box th, .analytics-box td { padding: 8px; border: 1px solid #404080; font-size: 14px; }
-.analytics-box th { background: #2a2a5a; color: #1e90ff; }
-.analytics-box td { background: #1a1a3a; }
-.analytics-box .highlight { color: #1e90ff; font-weight: bold; }
-@media (max-width: 768px) { .stTextArea textarea, .stButton button, .output-box, .history-box, .analytics-box { width: 100%; margin: 5px 0; } }
+@media (max-width: 768px) { .stTextArea textarea, .stButton button, .output-box, .history-box { width: 100%; margin: 5px 0; } }
 </style>
 <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
 """, unsafe_allow_html=True)
@@ -45,7 +39,7 @@ if page == "Summarize":
 
     text_input = st.text_area("Paste text here 📝", value=st.session_state.input_text, height=250, max_chars=20000)
     st.session_state.input_text = text_input
-    word_count = len(re.findall(r'\w+', text_input)) if text_input.strip() else 0  # More accurate word counting
+    word_count = len(re.findall(r'\w+', text_input)) if text_input.strip() else 0  # Accurate word counting
 
     if word_count > 20000:
         st.markdown(f'<div class="word-limit-warning">Exceeds 20,000 words. Reduce by {20000 - word_count}.</div>', unsafe_allow_html=True)
@@ -122,7 +116,7 @@ if page == "Summarize":
 
     def summarize_text(text):
         if not text or not text.strip():
-            return "Text is empty or invalid.", 0, 0
+            return "Text is empty or invalid."
 
         # Initialize NLTK tokenizer at runtime
         tokenizer = initialize_nltk()
@@ -133,7 +127,7 @@ if page == "Summarize":
         total_words = len(re.findall(r'\w+', text))  # Count words accurately
 
         if total_words == 0:
-            return "Text is empty after cleaning.", 0, 0
+            return "Text is empty after cleaning."
 
         keywords = [k[0] for k in Counter(re.findall(r'\w+', text.lower())).most_common(5)]
         word_freq = Counter(re.findall(r'\w+', text.lower()))
@@ -141,7 +135,7 @@ if page == "Summarize":
         total_sentences = len(sentences)
 
         if not sentences:
-            return "Text is too short to summarize.", total_words, 0
+            return "Text is too short to summarize."
 
         # Target 30% of the input word count for the summary
         target_word_count = max(30, int(total_words * 0.3))
@@ -167,6 +161,16 @@ if page == "Summarize":
             else:
                 break
 
+        # If we haven't reached the target, keep adding
+        if current_word_count < target_word_count * 0.8:  # If we're below 80% of target
+            for score, sentence in scored_sentences[len(summary_sentences):]:
+                sentence_word_count = len(re.findall(r'\w+', sentence))
+                if current_word_count < target_word_count:
+                    summary_sentences.append(sentence)
+                    current_word_count += sentence_word_count
+                else:
+                    break
+
         # If we overshot, trim the last sentence carefully
         if current_word_count > target_word_count * 1.2:  # Allow up to 20% over
             excess_words = current_word_count - target_word_count
@@ -175,7 +179,6 @@ if page == "Summarize":
             if len(words) > excess_words + 2:  # Ensure we don't trim too much
                 trimmed_sentence = " ".join(words[:len(words) - excess_words]) + "."
                 summary_sentences[-1] = trimmed_sentence
-                current_word_count = sum(len(re.findall(r'\w+', s)) for s in summary_sentences)
 
         # If no sentences were selected, pick the highest-scored one
         if not summary_sentences and scored_sentences:
@@ -189,8 +192,7 @@ if page == "Summarize":
         if not summary.endswith('.'):
             summary += '.'
 
-        final_word_count = len(re.findall(r'\w+', summary))
-        return summary, total_words, final_word_count
+        return summary
 
     if st.button("Summarize! 🚀") and word_count <= 20000:
         if not text_input.strip():
@@ -201,7 +203,7 @@ if page == "Summarize":
 
             start_time = time.time()
             try:
-                summary, original_word_count, final_word_count = summarize_text(text_input)
+                summary = summarize_text(text_input)
                 end_time = time.time()
                 time_taken = end_time - start_time
                 loading.empty()
@@ -209,33 +211,6 @@ if page == "Summarize":
                 # Display the summary
                 st.markdown(f'<div class="output-box">{summary}</div>', unsafe_allow_html=True)
                 st.markdown(f'<div style="color:#1e90ff;text-align:center;font-size:12px;">Done in {time_taken:.2f}s, 90%+ accuracy</div>', unsafe_allow_html=True)
-
-                # Display analytics in a 2-column table
-                if original_word_count > 0:
-                    reduction_percentage = ((original_word_count - final_word_count) / original_word_count) * 100
-                    st.markdown(f"""
-                    <div class="analytics-box">
-                        <p>📊 <strong>Summary Analytics</strong></p>
-                        <table>
-                            <tr>
-                                <th>Metric</th>
-                                <th>Value</th>
-                            </tr>
-                            <tr>
-                                <td>Original Words</td>
-                                <td><span class="highlight">{original_word_count}</span></td>
-                            </tr>
-                            <tr>
-                                <td>Summary Words</td>
-                                <td><span class="highlight">{final_word_count}</span></td>
-                            </tr>
-                            <tr>
-                                <td>Reduction</td>
-                                <td><span class="highlight">{reduction_percentage:.1f}%</span></td>
-                            </tr>
-                        </table>
-                    </div>
-                    """, unsafe_allow_html=True)
 
                 st.session_state.summaries.append({"input": text_input[:50] + "..." if len(text_input) > 50 else text_input, "summary": summary, "time": time_taken})
             except Exception as e:
