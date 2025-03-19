@@ -26,7 +26,10 @@ h1 { color: #1e90ff; text-align: center; font-family: 'Roboto', sans-serif; }
 .loading-text { color: #1e90ff; font-size: 18px; }
 .history-box { background: #1a1a3a; color: #fff; border: 1px solid #404080; padding: 8px; width: 90%; max-width: 900px; margin: 5px auto; white-space: pre-wrap; }
 .analytics-box { background: #1a1a3a; color: #e0e0ff; border: 1px solid #404080; padding: 8px; width: 90%; max-width: 900px; margin: 5px auto; text-align: center; }
-.analytics-box p { margin: 5px 0; font-size: 14px; }
+.analytics-box table { width: 100%; border-collapse: collapse; margin: 0 auto; }
+.analytics-box th, .analytics-box td { padding: 8px; border: 1px solid #404080; font-size: 14px; }
+.analytics-box th { background: #2a2a5a; color: #1e90ff; }
+.analytics-box td { background: #1a1a3a; }
 .analytics-box .highlight { color: #1e90ff; font-weight: bold; }
 @media (max-width: 768px) { .stTextArea textarea, .stButton button, .output-box, .history-box, .analytics-box { width: 100%; margin: 5px 0; } }
 </style>
@@ -197,15 +200,30 @@ if page == "Summarize":
             st.markdown(f'<div class="output-box">{summary}</div>', unsafe_allow_html=True)
             st.markdown(f'<div style="color:#1e90ff;text-align:center;font-size:12px;">Done in {time_taken:.2f}s, 90%+ accuracy</div>', unsafe_allow_html=True)
 
-            # Display analytics
+            # Display analytics in a 2-column table
             if original_word_count > 0:
                 reduction_percentage = ((original_word_count - final_word_count) / original_word_count) * 100
                 st.markdown(f"""
                 <div class="analytics-box">
                     <p>📊 <strong>Summary Analytics</strong></p>
-                    <p>Original: <span class="highlight">{original_word_count} words</span></p>
-                    <p>Summary: <span class="highlight">{final_word_count} words</span></p>
-                    <p>Reduction: <span class="highlight">{reduction_percentage:.1f}%</span></p>
+                    <table>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Value</th>
+                        </tr>
+                        <tr>
+                            <td>Original Words</td>
+                            <td><span class="highlight">{original_word_count}</span></td>
+                        </tr>
+                        <tr>
+                            <td>Summary Words</td>
+                            <td><span class="highlight">{final_word_count}</span></td>
+                        </tr>
+                        <tr>
+                            <td>Reduction</td>
+                            <td><span class="highlight">{reduction_percentage:.1f}%</span></td>
+                        </tr>
+                    </table>
                 </div>
                 """, unsafe_allow_html=True)
 
