@@ -117,9 +117,12 @@ if page == "Summarize":
         text = re.sub(r'\*\*.*?\*\*', '', text).strip()
         keywords = [k[0] for k in Counter(re.findall(r'\w+', text.lower())).most_common(5)]
         word_freq = Counter(re.findall(r'\w+', text.lower()))
-        sentences = tokenizer(text)
+        sentences = [s for s in tokenizer(text) if len(re.findall(r'\w+', s)) > 3]  # Filter out very short sentences
         total_sentences = len(sentences)
         total_words = len(re.findall(r'\w+', text))
+
+        if not sentences:
+            return "Text is too short to summarize."
 
         # Target 30% of the input word count for the summary
         target_word_count = max(30, int(total_words * 0.3))
@@ -128,21 +131,32 @@ if page == "Summarize":
         summary_sentences = []
         current_word_count = 0
         scored_sentences = sorted([(score_sentence(s, keywords, i + 1, total_sentences, word_freq), s) for i, s in enumerate(sentences)], reverse=True)
-        
+
+        # Select sentences until we reach or slightly exceed the target word count
         for score, sentence in scored_sentences:
             sentence_word_count = len(re.findall(r'\w+', sentence))
-            if current_word_count + sentence_word_count <= target_word_count:
+            if current_word_count < target_word_count:
                 summary_sentences.append(sentence)
                 current_word_count += sentence_word_count
             else:
-                remaining_words = target_word_count - current_word_count
-                if remaining_words >= 5:  # Only add if there's enough space for a meaningful addition
-                    words = re.findall(r'\w+', sentence)
-                    trimmed_sentence = " ".join(words[:remaining_words]) + "."
-                    summary_sentences.append(trimmed_sentence)
+                break
+
+        # If we haven't reached the target, add more sentences
+        if current_word_count < target_word_count * 0.8 and scored_sentences:  # Allow some flexibility
+            for score, sentence in scored_sentences[len(summary_sentences):]:
+                sentence_word_count = len(re.findall(r'\w+', sentence))
+                if current_word_count < target_word_count:
+                    summary_sentences.append(sentence)
+                    current_word_count += sentence_word_count
+                else:
                     break
 
-        # If no sentences were selected (e.g., all too long), pick the highest-scored one
+        # If we overshot, trim the last sentence
+        if current_word_count > target_word_count * 1.2:  # Allow up to 20% over
+            summary_sentences.pop()  # Remove the last sentence
+            current_word_count = sum(len(re.findall(r'\w+', s)) for s in summary_sentences)
+
+        # If no sentences were selected, pick the highest-scored one
         if not summary_sentences and scored_sentences:
             summary_sentences.append(scored_sentences[0][1])
 
