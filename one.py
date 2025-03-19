@@ -45,7 +45,7 @@ if page == "Summarize":
 
     text_input = st.text_area("Paste text here 📝", value=st.session_state.input_text, height=250, max_chars=20000)
     st.session_state.input_text = text_input
-    word_count = len(text_input.split()) if text_input.strip() else 0
+    word_count = len(re.findall(r'\w+', text_input)) if text_input.strip() else 0  # More accurate word counting
 
     if word_count > 20000:
         st.markdown(f'<div class="word-limit-warning">Exceeds 20,000 words. Reduce by {20000 - word_count}.</div>', unsafe_allow_html=True)
@@ -121,17 +121,24 @@ if page == "Summarize":
         return sent_tokenize
 
     def summarize_text(text):
+        if not text or not text.strip():
+            return "Text is empty or invalid.", 0, 0
+
         # Initialize NLTK tokenizer at runtime
         tokenizer = initialize_nltk()
 
         # Remove irrelevant content (e.g., source lines, newsletter prompts)
         text = re.sub(r'Source:.*?(?=\n|$)|⚡.*?(?=\n|$)|🤔.*?(?=\n|$)|Edited.*?(?=\n|$)|Questions.*?(?=\n|$)|Like.*?(?=\n|$)|Deepen.*?(?=\n|$)', '', text, flags=re.IGNORECASE)
         text = re.sub(r'\*\*.*?\*\*', '', text).strip()
+        total_words = len(re.findall(r'\w+', text))  # Count words accurately
+
+        if total_words == 0:
+            return "Text is empty after cleaning.", 0, 0
+
         keywords = [k[0] for k in Counter(re.findall(r'\w+', text.lower())).most_common(5)]
         word_freq = Counter(re.findall(r'\w+', text.lower()))
         sentences = [s for s in tokenizer(text) if len(re.findall(r'\w+', s)) > 3]  # Filter out very short sentences
         total_sentences = len(sentences)
-        total_words = len(re.findall(r'\w+', text))  # More accurate word counting
 
         if not sentences:
             return "Text is too short to summarize.", total_words, 0
@@ -186,51 +193,54 @@ if page == "Summarize":
         return summary, total_words, final_word_count
 
     if st.button("Summarize! 🚀") and word_count <= 20000:
-        loading = st.empty()
-        loading.markdown('<div class="loading-overlay"><div class="loading-text">Processing...</div></div>', unsafe_allow_html=True)
+        if not text_input.strip():
+            st.error("Please enter some text to summarize.")
+        else:
+            loading = st.empty()
+            loading.markdown('<div class="loading-overlay"><div class="loading-text">Processing...</div></div>', unsafe_allow_html=True)
 
-        start_time = time.time()
-        try:
-            summary, original_word_count, final_word_count = summarize_text(text_input)
-            end_time = time.time()
-            time_taken = end_time - start_time
-            loading.empty()
+            start_time = time.time()
+            try:
+                summary, original_word_count, final_word_count = summarize_text(text_input)
+                end_time = time.time()
+                time_taken = end_time - start_time
+                loading.empty()
 
-            # Display the summary
-            st.markdown(f'<div class="output-box">{summary}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div style="color:#1e90ff;text-align:center;font-size:12px;">Done in {time_taken:.2f}s, 90%+ accuracy</div>', unsafe_allow_html=True)
+                # Display the summary
+                st.markdown(f'<div class="output-box">{summary}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="color:#1e90ff;text-align:center;font-size:12px;">Done in {time_taken:.2f}s, 90%+ accuracy</div>', unsafe_allow_html=True)
 
-            # Display analytics in a 2-column table
-            if original_word_count > 0:
-                reduction_percentage = ((original_word_count - final_word_count) / original_word_count) * 100
-                st.markdown(f"""
-                <div class="analytics-box">
-                    <p>📊 <strong>Summary Analytics</strong></p>
-                    <table>
-                        <tr>
-                            <th>Metric</th>
-                            <th>Value</th>
-                        </tr>
-                        <tr>
-                            <td>Original Words</td>
-                            <td><span class="highlight">{original_word_count}</span></td>
-                        </tr>
-                        <tr>
-                            <td>Summary Words</td>
-                            <td><span class="highlight">{final_word_count}</span></td>
-                        </tr>
-                        <tr>
-                            <td>Reduction</td>
-                            <td><span class="highlight">{reduction_percentage:.1f}%</span></td>
-                        </tr>
-                    </table>
-                </div>
-                """, unsafe_allow_html=True)
+                # Display analytics in a 2-column table
+                if original_word_count > 0:
+                    reduction_percentage = ((original_word_count - final_word_count) / original_word_count) * 100
+                    st.markdown(f"""
+                    <div class="analytics-box">
+                        <p>📊 <strong>Summary Analytics</strong></p>
+                        <table>
+                            <tr>
+                                <th>Metric</th>
+                                <th>Value</th>
+                            </tr>
+                            <tr>
+                                <td>Original Words</td>
+                                <td><span class="highlight">{original_word_count}</span></td>
+                            </tr>
+                            <tr>
+                                <td>Summary Words</td>
+                                <td><span class="highlight">{final_word_count}</span></td>
+                            </tr>
+                            <tr>
+                                <td>Reduction</td>
+                                <td><span class="highlight">{reduction_percentage:.1f}%</span></td>
+                            </tr>
+                        </table>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-            st.session_state.summaries.append({"input": text_input[:50] + "..." if len(text_input) > 50 else text_input, "summary": summary, "time": time_taken})
-        except Exception as e:
-            loading.empty()
-            st.error(f"Error: {e}. Retry or check setup.")
+                st.session_state.summaries.append({"input": text_input[:50] + "..." if len(text_input) > 50 else text_input, "summary": summary, "time": time_taken})
+            except Exception as e:
+                loading.empty()
+                st.error(f"Error: {e}. Retry or check setup.")
     elif word_count > 20000:
         st.error(f"Exceeds 20,000 words. Reduce by {20000 - word_count}.")
 
