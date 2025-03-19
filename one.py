@@ -112,9 +112,9 @@ if page == "Summarize":
         # Initialize NLTK tokenizer at runtime
         tokenizer = initialize_nltk()
 
-        # Remove titles and irrelevant content
+        # Remove irrelevant content (e.g., source lines, newsletter prompts)
+        text = re.sub(r'Source:.*?(?=\n|$)|⚡.*?(?=\n|$)|🤔.*?(?=\n|$)|Edited.*?(?=\n|$)|Questions.*?(?=\n|$)|Like.*?(?=\n|$)|Deepen.*?(?=\n|$)', '', text, flags=re.IGNORECASE)
         text = re.sub(r'\*\*.*?\*\*', '', text).strip()
-        text = re.sub(r'⚡.*?(?=\n|$)|🤔.*?(?=\n|$)|Edited.*?(?=\n|$)|Questions.*?(?=\n|$)|Like.*?(?=\n|$)|Deepen.*?(?=\n|$)', '', text, flags=re.IGNORECASE)
         keywords = [k[0] for k in Counter(re.findall(r'\w+', text.lower())).most_common(5)]
         word_freq = Counter(re.findall(r'\w+', text.lower()))
         sentences = tokenizer(text)
@@ -127,22 +127,32 @@ if page == "Summarize":
         # Use sentence selection method
         summary_sentences = []
         current_word_count = 0
-        for sentence in sorted([(score_sentence(s, keywords, i + 1, total_sentences, word_freq), s) for i, s in enumerate(sentences)], reverse=True):
-            sentence_word_count = len(re.findall(r'\w+', sentence[1]))
+        scored_sentences = sorted([(score_sentence(s, keywords, i + 1, total_sentences, word_freq), s) for i, s in enumerate(sentences)], reverse=True)
+        
+        for score, sentence in scored_sentences:
+            sentence_word_count = len(re.findall(r'\w+', sentence))
             if current_word_count + sentence_word_count <= target_word_count:
-                summary_sentences.append(sentence[1])
+                summary_sentences.append(sentence)
                 current_word_count += sentence_word_count
             else:
                 remaining_words = target_word_count - current_word_count
-                if remaining_words > 10:
-                    words = re.findall(r'\w+', sentence[1])
-                    trimmed_sentence = " ".join(words[:remaining_words]) + "..."
+                if remaining_words >= 5:  # Only add if there's enough space for a meaningful addition
+                    words = re.findall(r'\w+', sentence)
+                    trimmed_sentence = " ".join(words[:remaining_words]) + "."
                     summary_sentences.append(trimmed_sentence)
-                break
+                    break
+
+        # If no sentences were selected (e.g., all too long), pick the highest-scored one
+        if not summary_sentences and scored_sentences:
+            summary_sentences.append(scored_sentences[0][1])
+
         summary = remove_repetitions(" ".join(summary_sentences), summary_sentences)
 
-        summary = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+|www\.[a-zA-Z0-9.-]+|\b(?:Dr\.|Professor|University|College|Museum|Suicide|Prevention|National|call|visit|click here|confidential|published|established|located|at the|in this era|students can|great time|survey|newsletter|email|sign up)\b.*', '', summary, flags=re.IGNORECASE)
+        # Clean up the summary
+        summary = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+|www\.[a-zA-Z0-9.-]+', '', summary, flags=re.IGNORECASE)
         summary = re.sub(r'\s+', ' ', summary).strip()
+        if not summary.endswith('.'):
+            summary += '.'
 
         return summary
 
