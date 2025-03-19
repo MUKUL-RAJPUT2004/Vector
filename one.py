@@ -6,18 +6,6 @@ import re
 import os
 import shutil
 from collections import Counter
-from transformers import pipeline
-
-# Cache the summarizer to load it once
-@st.cache_resource
-def load_summarizer():
-    try:
-        return pipeline("summarization", model="facebook/bart-large-cnn", device=-1)  # CPU
-    except Exception as e:
-        st.warning(f"Failed to load facebook/bart-large-cnn: {e}. Using backup method.")
-        return None
-
-summarizer = load_summarizer()
 
 # Initialize Session State
 if "summaries" not in st.session_state:
@@ -47,7 +35,7 @@ page = st.sidebar.selectbox("Navigate", ["Summarize", "History", "Contact"], key
 if page == "Summarize":
     st.title("Vector 🚀 - Your Universal Text Summarizer")
     st.write("Fast, free, and versatile for all text needs! ✨ | Limit: 20,000 words.")
-    st.write("Powered by advanced AI to deliver concise summaries in seconds. 🚀")
+    st.write("Powered by advanced summarization techniques to deliver concise summaries in seconds. 🚀")
 
     text_input = st.text_area("Paste text here 📝", value=st.session_state.input_text, height=250, max_chars=20000)
     st.session_state.input_text = text_input
@@ -136,47 +124,22 @@ if page == "Summarize":
         # Target 30% of the input word count for the summary
         target_word_count = max(30, int(total_words * 0.3))
 
-        # Try local summarization
-        if summarizer:
-            try:
-                target_length = max(50, int(total_words * 0.3))
-                summary_dict = summarizer(text, max_length=target_length, min_length=max(30, target_length // 2), do_sample=False)
-                summary = summary_dict[0]['summary_text']
-            except Exception as e:
-                st.warning(f"Local summarization failed: {e}. Using backup method.")
-                # Fallback: Select sentences until reaching target word count
-                summary_sentences = []
-                current_word_count = 0
-                for sentence in sorted([(score_sentence(s, keywords, i + 1, total_sentences, word_freq), s) for i, s in enumerate(sentences)], reverse=True):
-                    sentence_word_count = len(re.findall(r'\w+', sentence[1]))
-                    if current_word_count + sentence_word_count <= target_word_count:
-                        summary_sentences.append(sentence[1])
-                        current_word_count += sentence_word_count
-                    else:
-                        remaining_words = target_word_count - current_word_count
-                        if remaining_words > 10:
-                            words = re.findall(r'\w+', sentence[1])
-                            trimmed_sentence = " ".join(words[:remaining_words]) + "..."
-                            summary_sentences.append(trimmed_sentence)
-                        break
-                summary = remove_repetitions(" ".join(summary_sentences), summary_sentences)
-        else:
-            # Fallback: Select sentences until reaching target word count
-            summary_sentences = []
-            current_word_count = 0
-            for sentence in sorted([(score_sentence(s, keywords, i + 1, total_sentences, word_freq), s) for i, s in enumerate(sentences)], reverse=True):
-                sentence_word_count = len(re.findall(r'\w+', sentence[1]))
-                if current_word_count + sentence_word_count <= target_word_count:
-                    summary_sentences.append(sentence[1])
-                    current_word_count += sentence_word_count
-                else:
-                    remaining_words = target_word_count - current_word_count
-                    if remaining_words > 10:
-                        words = re.findall(r'\w+', sentence[1])
-                        trimmed_sentence = " ".join(words[:remaining_words]) + "..."
-                        summary_sentences.append(trimmed_sentence)
-                    break
-            summary = remove_repetitions(" ".join(summary_sentences), summary_sentences)
+        # Use sentence selection method
+        summary_sentences = []
+        current_word_count = 0
+        for sentence in sorted([(score_sentence(s, keywords, i + 1, total_sentences, word_freq), s) for i, s in enumerate(sentences)], reverse=True):
+            sentence_word_count = len(re.findall(r'\w+', sentence[1]))
+            if current_word_count + sentence_word_count <= target_word_count:
+                summary_sentences.append(sentence[1])
+                current_word_count += sentence_word_count
+            else:
+                remaining_words = target_word_count - current_word_count
+                if remaining_words > 10:
+                    words = re.findall(r'\w+', sentence[1])
+                    trimmed_sentence = " ".join(words[:remaining_words]) + "..."
+                    summary_sentences.append(trimmed_sentence)
+                break
+        summary = remove_repetitions(" ".join(summary_sentences), summary_sentences)
 
         summary = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+|www\.[a-zA-Z0-9.-]+|\b(?:Dr\.|Professor|University|College|Museum|Suicide|Prevention|National|call|visit|click here|confidential|published|established|located|at the|in this era|students can|great time|survey|newsletter|email|sign up)\b.*', '', summary, flags=re.IGNORECASE)
         summary = re.sub(r'\s+', ' ', summary).strip()
