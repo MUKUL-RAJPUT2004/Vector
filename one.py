@@ -61,6 +61,9 @@ if page == "Summarize":
         position_score = (total_sentences - position + 1) / total_sentences
         diversity_score = len(set(re.findall(r'\w+', sentence.lower()))) / len(re.findall(r'\w+', sentence.lower())) if len(re.findall(r'\w+', sentence.lower())) > 0 else 0
         centrality_score = sum(word_freq.get(word, 0) for word in re.findall(r'\w+', sentence.lower())) / len(re.findall(r'\w+', sentence.lower())) if len(re.findall(r'\w+', sentence.lower())) > 0 else 0
+        # Boost score for the first sentence to ensure it’s prioritized
+        if position == 1:
+            return (keyword_score * 2.0 + position_score * 1.5 + diversity_score * 1.0 + centrality_score * 1.0) + 10.0
         return keyword_score * 2.0 + position_score * 1.5 + diversity_score * 1.0 + centrality_score * 1.0
 
     def initialize_nltk():
@@ -119,14 +122,14 @@ if page == "Summarize":
         word_freq = Counter(re.findall(r'\w+', text.lower()))
         sentences = [s for s in tokenizer(text) if len(re.findall(r'\w+', s)) > 3]  # Filter out very short sentences
         total_sentences = len(sentences)
-        total_words = len(re.findall(r'\w+', text))
+        total_words = len(text.split())  # Use split() for more accurate word counting
 
         if not sentences:
             return "Text is too short to summarize."
 
         # Target 30% of the input word count for the summary
         target_word_count = max(30, int(total_words * 0.3))
-        st.write(f"Debug: Target word count = {target_word_count}")  # Debugging
+        st.write(f"Debug: Total words = {total_words}, Target word count = {target_word_count}")  # Debugging
 
         # Use sentence selection method
         summary_sentences = []
@@ -138,8 +141,16 @@ if page == "Summarize":
         for score, sentence in scored_sentences:
             st.write(f"Score: {score:.2f}, Sentence: {sentence}")
 
-        # Simplified selection: Add sentences until we reach the target
-        for score, sentence in scored_sentences:
+        # Ensure the first sentence (highest scored, likely the intro) is included
+        if scored_sentences:
+            summary_sentences.append(scored_sentences[0][1])
+            current_word_count = len(re.findall(r'\w+', scored_sentences[0][1]))
+            st.write(f"Debug: Added first sentence: {scored_sentences[0][1]}, Current word count: {current_word_count}")  # Debugging
+
+        # Add more sentences until we reach the target
+        for score, sentence in scored_sentences[1:]:
+            if "for instance" in sentence.lower() and not summary_sentences:  # Skip "For instance" if it's the first sentence
+                continue
             sentence_word_count = len(re.findall(r'\w+', sentence))
             if current_word_count < target_word_count:
                 summary_sentences.append(sentence)
@@ -147,17 +158,6 @@ if page == "Summarize":
                 st.write(f"Debug: Added sentence: {sentence}, Current word count: {current_word_count}")  # Debugging
             else:
                 break
-
-        # If we haven't reached the target, keep adding
-        if current_word_count < target_word_count * 0.8:  # If we're below 80% of target
-            for score, sentence in scored_sentences[len(summary_sentences):]:
-                sentence_word_count = len(re.findall(r'\w+', sentence))
-                if current_word_count < target_word_count:
-                    summary_sentences.append(sentence)
-                    current_word_count += sentence_word_count
-                    st.write(f"Debug: Added more sentence: {sentence}, Current word count: {current_word_count}")  # Debugging
-                else:
-                    break
 
         # If we overshot, trim the last sentence
         if current_word_count > target_word_count * 1.2:  # Allow up to 20% over
