@@ -25,7 +25,10 @@ h1 { color: #1e90ff; text-align: center; font-family: 'Roboto', sans-serif; }
 .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(10,10,26,0.7); display: flex; justify-content: center; align-items: center; }
 .loading-text { color: #1e90ff; font-size: 18px; }
 .history-box { background: #1a1a3a; color: #fff; border: 1px solid #404080; padding: 8px; width: 90%; max-width: 900px; margin: 5px auto; white-space: pre-wrap; }
-@media (max-width: 768px) { .stTextArea textarea, .stButton button, .output-box, .history-box { width: 100%; margin: 5px 0; } }
+.analytics-box { background: #1a1a3a; color: #e0e0ff; border: 1px solid #404080; padding: 8px; width: 90%; max-width: 900px; margin: 5px auto; text-align: center; }
+.analytics-box p { margin: 5px 0; font-size: 14px; }
+.analytics-box .highlight { color: #1e90ff; font-weight: bold; }
+@media (max-width: 768px) { .stTextArea textarea, .stButton button, .output-box, .history-box, .analytics-box { width: 100%; margin: 5px 0; } }
 </style>
 <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
 """, unsafe_allow_html=True)
@@ -61,10 +64,13 @@ if page == "Summarize":
         position_score = (total_sentences - position + 1) / total_sentences
         diversity_score = len(set(re.findall(r'\w+', sentence.lower()))) / len(re.findall(r'\w+', sentence.lower())) if len(re.findall(r'\w+', sentence.lower())) > 0 else 0
         centrality_score = sum(word_freq.get(word, 0) for word in re.findall(r'\w+', sentence.lower())) / len(re.findall(r'\w+', sentence.lower())) if len(re.findall(r'\w+', sentence.lower())) > 0 else 0
-        # Boost score for the first sentence to ensure it’s prioritized
+        # Boost score for the first sentence and sentences mentioning challenges
+        base_score = keyword_score * 2.0 + position_score * 1.5 + diversity_score * 1.0 + centrality_score * 1.0
         if position == 1:
-            return (keyword_score * 2.0 + position_score * 1.5 + diversity_score * 1.0 + centrality_score * 1.0) + 10.0
-        return keyword_score * 2.0 + position_score * 1.5 + diversity_score * 1.0 + centrality_score * 1.0
+            base_score += 10.0
+        if any(word in sentence.lower() for word in ["challenge", "difficult", "issue", "problem"]):
+            base_score += 5.0
+        return base_score
 
     def initialize_nltk():
         nltk_data_path = os.path.join(os.path.expanduser('~'), 'nltk_data')
@@ -122,58 +128,48 @@ if page == "Summarize":
         word_freq = Counter(re.findall(r'\w+', text.lower()))
         sentences = [s for s in tokenizer(text) if len(re.findall(r'\w+', s)) > 3]  # Filter out very short sentences
         total_sentences = len(sentences)
-        total_words = len(text.split())  # Use split() for more accurate word counting
+        total_words = len(re.findall(r'\w+', text))  # More accurate word counting
 
         if not sentences:
-            return "Text is too short to summarize."
+            return "Text is too short to summarize.", total_words, 0
 
         # Target 30% of the input word count for the summary
         target_word_count = max(30, int(total_words * 0.3))
-        st.write(f"Debug: Total words = {total_words}, Target word count = {target_word_count}")  # Debugging
 
         # Use sentence selection method
         summary_sentences = []
         current_word_count = 0
         scored_sentences = sorted([(score_sentence(s, keywords, i + 1, total_sentences, word_freq), s) for i, s in enumerate(sentences)], reverse=True)
 
-        # Log scored sentences for debugging
-        st.write("Debug: Scored sentences:")
-        for score, sentence in scored_sentences:
-            st.write(f"Score: {score:.2f}, Sentence: {sentence}")
-
         # Ensure the first sentence (highest scored, likely the intro) is included
         if scored_sentences:
             summary_sentences.append(scored_sentences[0][1])
             current_word_count = len(re.findall(r'\w+', scored_sentences[0][1]))
-            st.write(f"Debug: Added first sentence: {scored_sentences[0][1]}, Current word count: {current_word_count}")  # Debugging
 
         # Add more sentences until we reach the target
         for score, sentence in scored_sentences[1:]:
-            if "for instance" in sentence.lower() and not summary_sentences:  # Skip "For instance" if it's the first sentence
+            if "for instance" in sentence.lower() and len(summary_sentences) < 1:  # Skip "For instance" if it's the first sentence
                 continue
             sentence_word_count = len(re.findall(r'\w+', sentence))
             if current_word_count < target_word_count:
                 summary_sentences.append(sentence)
                 current_word_count += sentence_word_count
-                st.write(f"Debug: Added sentence: {sentence}, Current word count: {current_word_count}")  # Debugging
             else:
                 break
 
-        # If we overshot, trim the last sentence
+        # If we overshot, trim the last sentence carefully
         if current_word_count > target_word_count * 1.2:  # Allow up to 20% over
             excess_words = current_word_count - target_word_count
             last_sentence = summary_sentences[-1]
-            words = re.findall(r'\w+', last_sentence)
-            if len(words) > excess_words:
+            words = last_sentence.split()
+            if len(words) > excess_words + 2:  # Ensure we don't trim too much
                 trimmed_sentence = " ".join(words[:len(words) - excess_words]) + "."
                 summary_sentences[-1] = trimmed_sentence
                 current_word_count = sum(len(re.findall(r'\w+', s)) for s in summary_sentences)
-                st.write(f"Debug: Trimmed last sentence to: {trimmed_sentence}, New word count: {current_word_count}")  # Debugging
 
         # If no sentences were selected, pick the highest-scored one
         if not summary_sentences and scored_sentences:
             summary_sentences.append(scored_sentences[0][1])
-            st.write("Debug: No sentences met criteria, using highest-scored sentence.")  # Debugging
 
         summary = remove_repetitions(" ".join(summary_sentences), summary_sentences)
 
@@ -183,8 +179,8 @@ if page == "Summarize":
         if not summary.endswith('.'):
             summary += '.'
 
-        st.write(f"Debug: Final summary word count: {len(re.findall(r'\w+', summary))}")  # Debugging
-        return summary
+        final_word_count = len(re.findall(r'\w+', summary))
+        return summary, total_words, final_word_count
 
     if st.button("Summarize! 🚀") and word_count <= 20000:
         loading = st.empty()
@@ -192,12 +188,26 @@ if page == "Summarize":
 
         start_time = time.time()
         try:
-            summary = summarize_text(text_input)
+            summary, original_word_count, final_word_count = summarize_text(text_input)
             end_time = time.time()
             time_taken = end_time - start_time
             loading.empty()
+
+            # Display the summary
             st.markdown(f'<div class="output-box">{summary}</div>', unsafe_allow_html=True)
             st.markdown(f'<div style="color:#1e90ff;text-align:center;font-size:12px;">Done in {time_taken:.2f}s, 90%+ accuracy</div>', unsafe_allow_html=True)
+
+            # Display analytics
+            if original_word_count > 0:
+                reduction_percentage = ((original_word_count - final_word_count) / original_word_count) * 100
+                st.markdown(f"""
+                <div class="analytics-box">
+                    <p>📊 <strong>Summary Analytics</strong></p>
+                    <p>Original: <span class="highlight">{original_word_count} words</span></p>
+                    <p>Summary: <span class="highlight">{final_word_count} words</span></p>
+                    <p>Reduction: <span class="highlight">{reduction_percentage:.1f}%</span></p>
+                </div>
+                """, unsafe_allow_html=True)
 
             st.session_state.summaries.append({"input": text_input[:50] + "..." if len(text_input) > 50 else text_input, "summary": summary, "time": time_taken})
         except Exception as e:
